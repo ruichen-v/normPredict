@@ -1,0 +1,12 @@
+
+
+Predicting Depth, Surface Normals and Semantic Labels with a Common Multi-Scale Convolutional Architecture
+https://arxiv.org/pdf/1411.4734v4.pdf
+Code for paper:
+https://github.com/clcarwin/NYUDepthNet_Depth_Surface_Normals
+Pre-trained VGG model:
+http://www.cs.toronto.edu/~frossard/post/vgg16/
+
+
+
+
