@@ -10,12 +10,14 @@ class Model:
         self.img_dem_col = img_dem_col
         self.current_stage = ''
         self.weights = utils.get_weights(params_path + "/weights")
+        print(self.weights)
         self.biases = utils.get_weights(params_path + "/biases")
+        print(self.biases)
         self.output = 0
         self.session = None
         self.model_output = 0
         self.vars_initialized = False
-        self.model_input = tf.placeholder(tf.float32, shape=(self.img_dem_row, self.img_dem_col), name="x")
+        self.model_input = tf.placeholder(tf.float32, shape=(None, self.img_dem_row, self.img_dem_col, None), name="x")
         self.__build_model()
 
     def __get_weights(self, name):
@@ -28,8 +30,8 @@ class Model:
 
     def __conv_layer(self, _x, name):
         with tf.variable_scope(self.current_stage):
-            kernel = self.__get_weights(name)
-            bias = self.__get_biases(name)
+            kernel = self.__get_weights(name + '_W')
+            bias = self.__get_biases(name + '_b')
 
             conv = tf.nn.conv2d(_x, kernel, [1, 1, 1, 1], padding='SAME')
             bias = tf.nn.bias_add(conv, bias)
@@ -66,9 +68,10 @@ class Model:
         """
         self.current_stage = "vgg"
         print('hhhhhh')
+        print(self.model_input.shape)
         vgg_input = tf.image.resize_bilinear(self.model_input, size=(112, 150))
 
-        conv1 = self.__conv_block(vgg_input, ["conv1_1, conv1_2"])
+        conv1 = self.__conv_block(vgg_input, ['conv1_1', 'conv1_2'])
         pool1 = self.__max_pool(conv1, 'pool1')
 
         conv2 = self.__conv_block(pool1, ['conv2_1', 'conv2_2'])
@@ -83,15 +86,15 @@ class Model:
         conv5 = self.__conv_block(pool4, ['conv5_1', 'conv5_2', 'conv5_3'])
         pool5 = self.__max_pool(conv5, 'pool5')
 
-        fc1 = self.__fc_layer(pool5, 'fc1')
-        assert fc1.get_shape().as_list()[1:] == [4096]
-        relu_fc1 = tf.nn.relu(fc1)
+        # fc1 = self.__fc_layer(pool5, 'fc1')
+        # assert fc1.get_shape().as_list()[1:] == [4096]
+        # relu_fc1 = tf.nn.relu(fc1)
 
-        fc2 = self.__fc_layer(relu_fc1, 'fc2')
-        relu_fc2 = tf.nn.relu(fc2)
+        # fc2 = self.__fc_layer(relu_fc1, 'fc2')
+        # relu_fc2 = tf.nn.relu(fc2)
 
-        print('hhhhhh')
-        self.output = tf.image.resize_bilinear(relu_fc2, size=(55, 74))
+        # self.output = tf.image.resize_bilinear(relu_fc2, size=(55, 74))
+        print('hhhhhhend')
 
     def __build_scale2_model(self):
         vgg_output = self.output
@@ -126,8 +129,8 @@ class Model:
 
     def __build_model(self):
         self.__build_vgg_model()
-        self.__build_scale2_model()
-        self.__build_scale3_model()
+        # self.__build_scale2_model()
+        # self.__build_scale3_model()
 
     def __init_tensorflow_session(self):
         if self.session is None:
@@ -146,3 +149,10 @@ class Model:
         self.__init_tensorflow_session()
         self.__initialize_variables()
         self.session.run(self.model_output, feed_dict={self.model_input: img})
+
+model = Model('./modelsave',128,128)
+test = tf.Variable(1,name='test')
+sess = tf.Session()
+sess.run(tf.global_variables_initializer())
+for t in tf.global_variables():
+    print(sess.run(t))

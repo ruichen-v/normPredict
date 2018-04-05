@@ -10,7 +10,7 @@ def _get_parameters_in_directory(directory):
         if param_file.endswith('.npy' or '.npz'):
             print(param_file)
             loaded_param_arr = np.load(directory + '/' + param_file)
-            file_name = splitext(param_file)
+            file_name = splitext(param_file)[0]
             params[file_name] = (convert_to_tensorflow_kernel(loaded_param_arr))
     return params
 
@@ -18,7 +18,8 @@ def _get_parameters_in_directory(directory):
 def get_weights(weights_dir):
     weights = {}
     for network_name in listdir(weights_dir):
-        weights[str(network_name)] = _get_parameters_in_directory(weights_dir + "/" + network_name)
+        weights[str(network_name)] = \
+            _get_parameters_in_directory(weights_dir + "/" + network_name)
     return weights
 
 
@@ -35,5 +36,6 @@ def convert_to_tensorflow_kernel(kernel):
         height = kernel.shape[1]
         for var_i in range(width):
             for var_j in range(height):
-                tensorflow_kernel[var_i, var_j, :, :] = kernel[width - var_i - 1, height - var_j - 1, :, :]
+                tensorflow_kernel[var_i, var_j, :, :] = \
+                    kernel[width - var_i - 1, height - var_j - 1, :, :]
     return tensorflow_kernel
