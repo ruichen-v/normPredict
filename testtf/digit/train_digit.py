@@ -16,7 +16,7 @@ IMAGE_SIZE = 28
 NUM_CHANNELS = 1
 
 # Training Parameters
-learning_rate = 0.0001
+learning_rate = 0.001
 num_epochs = 2
 display_step = 10
 
@@ -103,9 +103,9 @@ train_img, train_labels = loadDataAndParse(TRAIN_IMG_filename, TRAIN_LBL_filenam
 test_img,  test_labels  = loadDataAndParse(TEST_IMG_filename, TEST_LBL_filename, 10000)
 # construct dataset
 train_set = tf.data.Dataset.from_tensor_slices((train_img, train_labels))\
-            .shuffle(buffer_size=10000).batch(128)
+            .shuffle(buffer_size=10000).batch(200)
 test_set = tf.data.Dataset.from_tensor_slices((test_img, test_labels))\
-            .shuffle(buffer_size=1000).batch(256)
+            .shuffle(buffer_size=10000).batch(10000)
 
 it = tf.data.Iterator.from_structure(train_set.output_types, train_set.output_shapes)
 features, labels = it.get_next()
@@ -122,7 +122,6 @@ loss_op = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
     logits=logits, labels=labels))
 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
 train_op = optimizer.minimize(loss_op)
-
 
 # Evaluate model
 correct_pred = tf.equal(tf.argmax(prediction, 1), tf.argmax(labels,1))
