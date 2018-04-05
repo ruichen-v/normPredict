@@ -10,9 +10,9 @@ class Model:
         self.img_dem_col = img_dem_col
         self.current_stage = ''
         self.weights = utils.get_weights(params_path + "/weights")
-        print(self.weights)
+        # print(self.weights)
         self.biases = utils.get_weights(params_path + "/biases")
-        print(self.biases)
+        # print(self.biases)
         self.output = 0
         self.session = None
         self.model_output = 0
@@ -67,8 +67,8 @@ class Model:
         conv_block4 -> max_pool -> conv_block5 -> FC1 -> FC2
         """
         self.current_stage = "vgg"
-        print('hhhhhh')
-        print(self.model_input.shape)
+        # print('hhhhhh')
+        # print(self.model_input.shape)
         vgg_input = tf.image.resize_bilinear(self.model_input, size=(112, 150))
 
         conv1 = self.__conv_block(vgg_input, ['conv1_1', 'conv1_2'])
@@ -94,11 +94,11 @@ class Model:
         # relu_fc2 = tf.nn.relu(fc2)
 
         # self.output = tf.image.resize_bilinear(relu_fc2, size=(55, 74))
-        print('hhhhhhend')
+        # print('hhhhhhend')
 
     def __build_scale2_model(self):
         vgg_output = self.output
-        print('hhhhhh')
+        # print('hhhhhh')
         scale2_input = tf.image.resize_bilinear(self.model_input, size=(55, 74))
         self.current_stage = "scale2"
 
@@ -151,8 +151,18 @@ class Model:
         self.session.run(self.model_output, feed_dict={self.model_input: img})
 
 model = Model('./modelsave',128,128)
-test = tf.Variable(1,name='test')
+
+# vgg/conv1_1/kernel:0
+# <tf.Variable 'ConvNet/conv1/kernel:0' shape=(5, 5, 1, 32) dtype=float32_ref>
+# <tf.Variable 'ConvNet/conv1/bias:0' shape=(32,) dtype=float32_ref>
+
+for name in sorted(model.weights['vgg']):
+    _ = tf.Variable(model.weights['vgg'][name] ,name=name)
+
+for name in sorted(model.biases['vgg']):
+    _ = tf.Variable(model.biases['vgg'][name] ,name=name)
+
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 for t in tf.global_variables():
-    print(sess.run(t))
+    print(t.name, t.shape)

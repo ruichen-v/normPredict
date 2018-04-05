@@ -138,10 +138,11 @@ with tf.Session() as sess:
     step = 1
     # Run
     while True:
+    # for i in range(0,3):
         try:
             # Run optimization op (backprop)
             _, loss, acc = sess.run([train_op, loss_op, accuracy], feed_dict={Drop_rate: 0.0, Is_training: True})
-            if step % display_step == 0 or step == 1:
+            if step % 1 == 0 or step == 1:
                 print("Step " + str(step) + ", Minibatch Loss= " + \
                       "{:.4f}".format(loss) + ", Training Accuracy= " + \
                       "{:.3f}".format(acc))
@@ -151,8 +152,13 @@ with tf.Session() as sess:
         
 
     print("Optimization Finished!")
-    # for t in tf.global_variables():
+    # Create saver
+    saveVar = {t for t in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='ConvNet') if 'Adam' not in t.name}
+    saver = tf.train.Saver(saveVar)
+    # save_path = saver.save(sess, "./models/model1.ckpt")
+    # for t in saveVar:
     #     print(t)
+    saver.restore(sess, "./models/model1.ckpt")
 
     sess.run(test_init_op)
     # Calculate accuracy for 256 MNIST test images

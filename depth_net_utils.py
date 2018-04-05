@@ -8,7 +8,7 @@ def _get_parameters_in_directory(directory):
     params = {}
     for param_file in listdir(directory):
         if param_file.endswith('.npy' or '.npz'):
-            print(param_file)
+            # print(param_file)
             loaded_param_arr = np.load(directory + '/' + param_file)
             file_name = splitext(param_file)[0]
             params[file_name] = (convert_to_tensorflow_kernel(loaded_param_arr))
@@ -28,8 +28,8 @@ def convert_to_tensorflow_kernel(kernel):
     :param kernel: theano weight kernel
     :return: tensorflow compatible weight kernel
     """
-    print(kernel.shape)
-    print(len(kernel.shape))
+    # print(kernel.shape)
+    # print(len(kernel.shape))
     tensorflow_kernel = np.copy(kernel)
     if len(kernel.shape) > 1:
         width  = kernel.shape[0]
