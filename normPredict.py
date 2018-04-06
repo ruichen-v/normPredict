@@ -20,65 +20,38 @@ IMAGE_SIZE = 128
 NUM_CHANNELS = 1
 
 # Training Parameters
-learning_rate = 0.001
+learning_rate = 0.01
 num_epochs = 2
 display_step = 10
 batch_size = 32
 
 # tf Graph input
+datasetName = tf.placeholder(tf.string, shape=[None])
 Drop_rate = tf.placeholder(tf.float32) # dropout (keep probability)
 Is_training = tf.placeholder(tf.bool)
 
-def scan_png_files(folder):
-    '''
-    folder: 1.png 3.png 4.png 6.png 7.exr unknown.mpeg
-    return: ['1.png', '3.png', '4.png']
-    '''
-    ext = '.png'
-    ret = [_im_name for _im_name in os.listdir(folder) if _im_name.endswith(ext)]
 
-    return ret
+def _parser(proto):
+    # Conver tfrecord to tensors
+    _features = tf.parse_single_example(
+        proto,
+        features = {
+        'image': tf.FixedLenFeature((),tf.string),
+        'mask': tf.FixedLenFeature((),tf.string),
+        'gt': tf.FixedLenFeature((),tf.string)
+    })
 
-def loadDataAndParse(_imageDir, _maskDir, _gtDir):
-    _image_names = scan_png_files(_imageDir)
-    _mask_names = scan_png_files(_maskDir)
-    _gt_names = scan_png_files(_gtDir)
+    _image = tf.decode_raw(_features['image'], tf.float32)
+    _image = tf.reshape(_image, [IMAGE_SIZE,IMAGE_SIZE,3])
 
-    _pred_diff_gt = set(_image_names).difference(_gt_names)
-    assert len(_pred_diff_gt) == 0, \
-        'No corresponding groundtruth file for the following files:\n' + '\n'.join(_pred_diff_gt)
-    _pred_diff_mask = set(_image_names).difference(_mask_names)
-    assert len(_pred_diff_mask) == 0, \
-        'No corresponding mask file for the following files:\n' + '\n'.join(_pred_diff_mask)
+    _mask = tf.decode_raw(_features['mask'], tf.int64)
+    _mask = tf.cast(tf.reshape(_mask, [IMAGE_SIZE,IMAGE_SIZE]), tf.bool)
 
-    # _imN = len(_image_names)
-    _imN = 3000
-    _Images = np.zeros((_imN, IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
-    _Masks  = np.zeros((_imN, IMAGE_SIZE, IMAGE_SIZE), dtype=np.bool)
-    _Gts    = np.zeros((_imN, IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
+    _gt = tf.decode_raw(_features['gt'], tf.float32)
+    _gt = tf.reshape(_gt, [IMAGE_SIZE,IMAGE_SIZE,3])
 
-    _cur_id = 0
-    for _im_name in _image_names:
-        if _cur_id+1 > _imN:
-            break
-        print('Proccessing file {} - {}'.format(_im_name, _cur_id))
-        _image = imageio.imread(os.path.join(_imageDir, _im_name))
-        _mask = imageio.imread(os.path.join(_maskDir, _im_name)) # Greyscale image
-        _gt = imageio.imread(os.path.join(_gtDir, _im_name))
+    return _image, _mask, _gt
 
-        # scipy.misc.imsave('imageload'+str(_cur_id)+'.png', _image)
-        # scipy.misc.imsave('maskload'+str(_cur_id)+'.png', _mask)
-        # scipy.misc.imsave('gtload'+str(_cur_id)+'.png', _gt)
-
-        _image = (_image / 255.0)
-        _mask = (_mask != 0)
-
-        _Images[_cur_id,:,:,:] = _image
-        _Gts[_cur_id,:,:,:] = _gt
-        _Masks[_cur_id,:,:] = _mask
-        _cur_id = _cur_id + 1
-
-    return _Images, _Masks, _Gts
 
 # prediction 0-255, groundtruth 0-255
 def calcloss(_prediction, _mask, _groundtruth):
@@ -229,19 +202,15 @@ def conv_net(x, dropout, is_training):
     ###### scale 3
     return out
 
-# load data
-train_img, train_mask, train_gt = loadDataAndParse('./img/train/color', './img/train/mask', './img/train/normal')
-
+trainingSetNames = ['./trainTFRecords/' + str(I) +'.tfrecords' for I in range(0,20000)]
 # construct dataset
-train_set = tf.data.Dataset.from_tensor_slices((train_img, train_mask, train_gt))\
-           .shuffle(buffer_size=3000).batch(batch_size)
+dataset = tf.data.TFRecordDataset(datasetName).map(_parser).shuffle(buffer_size=4096).batch(batch_size)
 
-it = tf.data.Iterator.from_structure(train_set.output_types, train_set.output_shapes)
+it = dataset.make_initializable_iterator()
 
 # N*128*128*3-(0,1), N*128*128-(0/1), N*128*128*3-(-1,1)
 imageIn, maskIn, gtIn = it.get_next()
-
-training_init_op = it.make_initializer(train_set)
+print(imageIn.shape, maskIn.shape, gtIn.shape)
 
 # Construct model
 prediction = conv_net(imageIn, Drop_rate, Is_training)
@@ -272,7 +241,7 @@ init_val = tf.global_variables_initializer()
 with tf.Session() as sess:
 
     # Run the initializer
-    sess.run([init_val, training_init_op])
+    sess.run([init_val, it.initializer], feed_dict={datasetName: trainingSetNames})
     vggRestorer.restore(sess, "./savedModel/vgg_original.ckpt")
 
     # Run
@@ -292,7 +261,6 @@ with tf.Session() as sess:
             step = step + 1
         except tf.errors.OutOfRangeError as e:
             break
-        
 
     print("Optimization Finished!")
     # Create saver

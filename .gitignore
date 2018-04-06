@@ -1,3 +1,5 @@
 venv/*
 testtf/digit/models/*
 savedModel/*
+*.tfrecords
+trainTFRecords/*
