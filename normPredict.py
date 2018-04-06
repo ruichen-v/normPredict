@@ -184,8 +184,14 @@ def conv_net(x, dropout, is_training):
         pool2_img = tf.layers.max_pooling2d(conv2_img, 4, 4)
 
         # Stack conv2img with vgg_out, aixs = channel
-        # print(pool2_img.shape, vgg_out.shape)
-        stack2 = tf.concat([pool2_img, vgg_out], axis=3)
+        padding_pool2_img = tf.constant([[0, 0,], [0, 0], [0, 0], [0, 64]])
+        pool2_img = tf.pad(pool2_img, padding_pool2_img, "CONSTANT")
+
+        padding_vgg_out = tf.constant([[0, 0,], [0, 0], [0, 0], [96, 0]])
+        vgg_out = tf.pad(vgg_out, padding_vgg_out, "CONSTANT")
+
+        stack2 = tf.add(pool2_img, vgg_out)
+        # stack2 = tf.concat([pool2_img, vgg_out], axis=3)
         # print(stack2.shape)
 
         # Convolution Layer with 96+64 filters and a kernel size of 5
