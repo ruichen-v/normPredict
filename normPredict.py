@@ -13,6 +13,8 @@ import numpy as np
 import gzip
 import imageio
 import os
+import matplotlib.pyplot as plt
+import scipy.misc
 
 IMAGE_SIZE = 128
 NUM_CHANNELS = 1
@@ -21,7 +23,7 @@ NUM_CHANNELS = 1
 learning_rate = 0.001
 num_epochs = 2
 display_step = 10
-batch_size = 1
+batch_size = 32
 
 # tf Graph input
 Drop_rate = tf.placeholder(tf.float32) # dropout (keep probability)
@@ -50,46 +52,57 @@ def loadDataAndParse(_imageDir, _maskDir, _gtDir):
         'No corresponding mask file for the following files:\n' + '\n'.join(_pred_diff_mask)
 
     # _imN = len(_image_names)
-    _imN = 100
+    _imN = 3000
     _Images = np.zeros((_imN, IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
-    _Masks  = np.zeros((_imN, IMAGE_SIZE, IMAGE_SIZE), dtype=np.float32)
+    _Masks  = np.zeros((_imN, IMAGE_SIZE, IMAGE_SIZE), dtype=np.bool)
     _Gts    = np.zeros((_imN, IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
 
     _cur_id = 0
-    count = 1
     for _im_name in _image_names:
-        if count > _imN:
+        if _cur_id+1 > _imN:
             break
-        print('Proccessing file {} - {}'.format(_im_name, count))
-        _images = imageio.imread(os.path.join(_imageDir, _im_name))
-        _masks = imageio.imread(os.path.join(_maskDir, _im_name)) # Greyscale image
-        _gts = imageio.imread(os.path.join(_gtDir, _im_name))
+        print('Proccessing file {} - {}'.format(_im_name, _cur_id))
+        _image = imageio.imread(os.path.join(_imageDir, _im_name))
+        _mask = imageio.imread(os.path.join(_maskDir, _im_name)) # Greyscale image
+        _gt = imageio.imread(os.path.join(_gtDir, _im_name))
 
-        _images = (_images / 255.0)
-        _masks = _masks / 255
+        # scipy.misc.imsave('imageload'+str(_cur_id)+'.png', _image)
+        # scipy.misc.imsave('maskload'+str(_cur_id)+'.png', _mask)
+        # scipy.misc.imsave('gtload'+str(_cur_id)+'.png', _gt)
 
-        _Images[_cur_id,:,:,:] = _images
-        _Gts[_cur_id,:,:,:] = _gts
-        _Masks[_cur_id,:,:] = _masks
-        count = count + 1
+        _image = (_image / 255.0)
+        _mask = (_mask != 0)
+
+        _Images[_cur_id,:,:,:] = _image
+        _Gts[_cur_id,:,:,:] = _gt
+        _Masks[_cur_id,:,:] = _mask
+        _cur_id = _cur_id + 1
 
     return _Images, _Masks, _Gts
 
 # prediction 0-255, groundtruth 0-255
-def calcloss(prediction, groundtruth, mask):
-    # calculate loss
-    pred_norm = tf.sqrt(tf.reduce_sum(tf.multiply(prediction, prediction), axis=3))
-    pred_norm_ext = tf.stack([pred_norm,]*3, axis=3)
-    pred_normalized = tf.div(prediction, pred_norm_ext)
-    mask_ext = tf.stack([mask,]*3,3)
-    pred_masked = tf.multiply(pred_normalized, mask_ext)
+def calcloss(_prediction, _mask, _groundtruth):
+    # normalize prediction
+    _prediction = ((_prediction / 255.0) - 0.5) * 2.
+    _pred_norm = tf.sqrt(tf.reduce_sum(tf.multiply(_prediction, _prediction), axis=3, keep_dims=True))
+    _pred_normalized = tf.div(_prediction, tf.tile(_pred_norm, [1,1,1,3]))
+    # normalize groundtruth
+    _groundtruth = ((_groundtruth / 255.0) - 0.5) * 2.
+    _gt_norm = tf.sqrt(tf.reduce_sum(tf.multiply(_groundtruth, _groundtruth), axis=3, keep_dims=True))
+    _gt_normalized = tf.div(_groundtruth, tf.tile(_gt_norm, [1,1,1,3]))
+    # calculate dot product = cos(theta)
+    _dotprod = tf.reduce_sum(tf.multiply(_pred_normalized, _gt_normalized), axis=3)
+    # mask object
+    _dotprod = tf.boolean_mask(_dotprod, _mask)
+    # fix nan by setting to -1
+    _dotprod = tf.where(tf.is_nan(_dotprod), tf.zeros_like(_dotprod)-1, _dotprod)
+    # clip to -1,+1
+    _dotprod = tf.clip_by_value(_dotprod, -1., 1.)
+    # calculate angles
+    _ang     = tf.acos(_dotprod)
 
-    gt_norm = tf.sqrt(tf.reduce_sum(tf.multiply(groundtruth, groundtruth), axis=3))
-    gt_norm_ext = tf.stack([gt_norm,]*3, axis=3)
-    gt_normalized = tf.div(groundtruth, gt_norm_ext)
-
-    loss = tf.reduce_sum(tf.reduce_sum(tf.reduce_sum(tf.reduce_sum(tf.multiply(pred_masked, gt_normalized)))))
-    loss = -loss/tf.to_float(batch_size)
+    loss = -tf.reduce_sum(_dotprod) / batch_size
+    # loss = tf.reduce_mean(_ang)
 
     return loss
 
@@ -191,7 +204,7 @@ def conv_net(x, dropout, is_training):
         vgg_out = tf.pad(vgg_out, padding_vgg_out, "CONSTANT")
 
         stack2 = tf.add(pool2_img, vgg_out)
-        # stack2 = tf.concat([pool2_img, vgg_out], axis=3)
+        # stack2 = tf.concat([pool2_img, vgg_out], axis=3) this does not work !!
         # print(stack2.shape)
 
         # Convolution Layer with 96+64 filters and a kernel size of 5
@@ -216,16 +229,12 @@ def conv_net(x, dropout, is_training):
     ###### scale 3
     return out
 
-TRAIN_IMG_filename = "train-images-idx3-ubyte.gz"
-TRAIN_LBL_filename = "train-labels-idx1-ubyte.gz"
-TEST_IMG_filename = "t10k-images-idx3-ubyte.gz"
-TEST_LBL_filename = "t10k-labels-idx1-ubyte.gz"
-
 # load data
 train_img, train_mask, train_gt = loadDataAndParse('./img/train/color', './img/train/mask', './img/train/normal')
+
 # construct dataset
 train_set = tf.data.Dataset.from_tensor_slices((train_img, train_mask, train_gt))\
-            .shuffle(buffer_size=10000).batch(batch_size)
+           .shuffle(buffer_size=3000).batch(batch_size)
 
 it = tf.data.Iterator.from_structure(train_set.output_types, train_set.output_shapes)
 
@@ -235,9 +244,9 @@ imageIn, maskIn, gtIn = it.get_next()
 training_init_op = it.make_initializer(train_set)
 
 # Construct model
-predOut = conv_net(imageIn, Drop_rate, Is_training)
+prediction = conv_net(imageIn, Drop_rate, Is_training)
 # Define loss and optimizer
-loss_op = calcloss(predOut, gtIn, maskIn)
+loss_op = calcloss(prediction, maskIn, gtIn)
 
 # Manage vars
 vggVar_dict = {getVggStoredName(val):val for val in tf.global_variables() \
@@ -246,10 +255,10 @@ vggRestorer = tf.train.Saver(vggVar_dict)
 vggVar_list = vggVar_dict.values()
 trainVar_list = [var for var in tf.global_variables() if var not in vggVar_list]
 
-for key, val in vggVar_dict.items():
-    print(key, val)
-for t in trainVar_list:
-    print(t.name, t.shape)
+# for key, val in vggVar_dict.items():
+#     print(key, val)
+# for t in trainVar_list:
+#     print(t.name, t.shape)
 # exit(0)
 
 # Generate train op
@@ -268,14 +277,18 @@ with tf.Session() as sess:
 
     # Run
     step = 1
-    # while True:
-    for i in range(0,100):
+    while True:
+    # for i in range(0,10):
         try:
             # Run optimization op (backprop)
-            _, loss = sess.run([train_op, loss_op], feed_dict={Drop_rate: 0.5, Is_training: True})
-            if step % 1 == 0 or step == 1:
+            loss, _ = sess.run([loss_op, train_op], feed_dict={Drop_rate: 0.5, Is_training: True})
+            if step % display_step == 0 or step == 1:
                 print("Step " + str(step) + ", Minibatch Loss= " + \
                       "{:.4f}".format(loss))
+                # print(prediction_debug.shape, gtin_debug.shape, maskIn_debug.shape, dotprod_debug)
+                # scipy.misc.imsave('prediction_debug.png', prediction_debug[0,:,:,:])
+                # scipy.misc.imsave('gt.png', gtin_debug[0,:,:,:])
+                # scipy.misc.imsave('mask.png', np.array(maskIn_debug[0,:,:]).astype(np.uint8))
             step = step + 1
         except tf.errors.OutOfRangeError as e:
             break
@@ -291,3 +304,4 @@ with tf.Session() as sess:
     # # Calculate accuracy for 256 MNIST test images
     # print("Testing Accuracy:", \
     #     sess.run(accuracy, feed_dict={Drop_rate: 0.5, Is_training: False}))
+    sess.close()
