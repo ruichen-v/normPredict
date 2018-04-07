@@ -67,8 +67,6 @@ class Model:
         conv_block4 -> max_pool -> conv_block5 -> FC1 -> FC2
         """
         self.current_stage = "vgg"
-        # print('hhhhhh')
-        # print(self.model_input.shape)
         vgg_input = tf.image.resize_bilinear(self.model_input, size=(112, 150))
 
         conv1 = self.__conv_block(vgg_input, ['conv1_1', 'conv1_2'])
@@ -86,51 +84,8 @@ class Model:
         conv5 = self.__conv_block(pool4, ['conv5_1', 'conv5_2', 'conv5_3'])
         pool5 = self.__max_pool(conv5, 'pool5')
 
-        # fc1 = self.__fc_layer(pool5, 'fc1')
-        # assert fc1.get_shape().as_list()[1:] == [4096]
-        # relu_fc1 = tf.nn.relu(fc1)
-
-        # fc2 = self.__fc_layer(relu_fc1, 'fc2')
-        # relu_fc2 = tf.nn.relu(fc2)
-
-        # self.output = tf.image.resize_bilinear(relu_fc2, size=(55, 74))
-        # print('hhhhhhend')
-
-    def __build_scale2_model(self):
-        vgg_output = self.output
-        # print('hhhhhh')
-        scale2_input = tf.image.resize_bilinear(self.model_input, size=(55, 74))
-        self.current_stage = "scale2"
-
-        conv1 = self.__conv_layer(tf.add(scale2_input, vgg_output), 'conv1')
-
-        conv2 = self.__conv_layer(conv1, 'conv2')
-
-        conv3 = self.__conv_layer(conv2, 'conv3')
-
-        conv4 = self.__conv_layer(conv3, 'conv4')
-
-        conv5 = self.__conv_layer(conv4, 'conv5')
-
-        self.output = tf.image.resize_bilinear(conv5, size=(109, 147))
-
-    def __build_scale3_model(self):
-        scale2_output = self.output
-        scale3_input = tf.image.resize_bilinear(self.model_input, size=(109, 147))
-        self.current_stage = "scale3"
-
-        conv1 = self.__conv_layer(tf.add(scale3_input, scale2_output), 'conv1')
-
-        conv2 = self.__conv_layer(conv1, 'conv2')
-
-        conv3 = self.__conv_layer(conv2, 'conv3')
-
-        self.model_output = self.__conv_layer(conv3, 'conv4')
-
     def __build_model(self):
         self.__build_vgg_model()
-        # self.__build_scale2_model()
-        # self.__build_scale3_model()
 
     def __init_tensorflow_session(self):
         if self.session is None:
@@ -139,16 +94,6 @@ class Model:
     def __initialize_variables(self):
         if not self.vars_initialized:
             self.session.run(tf.initialize_all_variables())
-
-    def save_model(self, name):
-        self.__init_tensorflow_session()
-        saver = tf.train.Saver()
-        saver.save(self.session, name)
-
-    def predict_depth(self, img):
-        self.__init_tensorflow_session()
-        self.__initialize_variables()
-        self.session.run(self.model_output, feed_dict={self.model_input: img})
 
 model = Model('./vgg_raw',128,128)
 
@@ -169,6 +114,3 @@ saver = tf.train.Saver(saveVar)
 save_path = saver.save(sess, "./savedModel/vgg_original.ckpt")
 for t in saveVar:
     print(t.name, t.shape)
-# saver.restore(sess, "./savedModel/vgg.ckpt")
-# for t in tf.global_variables():
-#     print(t.name, t.shape)

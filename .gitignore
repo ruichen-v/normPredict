@@ -3,3 +3,9 @@ testtf/digit/models/*
 savedModel/*
 *.tfrecords
 trainTFRecords/*
+testTFRecords/*
+tmp/*
+debug_out/*
+deprecated/*
+graph/*
+output.txt

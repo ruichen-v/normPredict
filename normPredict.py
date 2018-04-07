@@ -20,16 +20,18 @@ IMAGE_SIZE = 128
 NUM_CHANNELS = 1
 
 # Training Parameters
-learning_rate = 0.01
-num_epochs = 2
-display_step = 10
-batch_size = 32
+learning_rate = 0.001
+num_epochs = 3
+display_step = 20
+test_step = 500
+batch_size = 18
 
 # tf Graph input
-datasetName = tf.placeholder(tf.string, shape=[None])
+trainSetName = tf.placeholder(tf.string, shape=[None])
+slfTestSetName = tf.placeholder(tf.string,  shape=[None])
+evalSetName = tf.placeholder(tf.string, shape=[None])
 Drop_rate = tf.placeholder(tf.float32) # dropout (keep probability)
 Is_training = tf.placeholder(tf.bool)
-
 
 def _parser(proto):
     # Conver tfrecord to tensors
@@ -52,15 +54,30 @@ def _parser(proto):
 
     return _image, _mask, _gt
 
+def _parser_eval(proto):
+    # Conver tfrecord to tensors
+    _features = tf.parse_single_example(
+        proto,
+        features = {
+        'image': tf.FixedLenFeature((),tf.string),
+        'mask': tf.FixedLenFeature((),tf.string)
+    })
 
-# prediction 0-255, groundtruth 0-255
-def calcloss(_prediction, _mask, _groundtruth):
+    _image = tf.decode_raw(_features['image'], tf.float32)
+    _image = tf.reshape(_image, [IMAGE_SIZE,IMAGE_SIZE,3])
+
+    _mask = tf.decode_raw(_features['mask'], tf.int64)
+    _mask = tf.cast(tf.reshape(_mask, [IMAGE_SIZE,IMAGE_SIZE]), tf.bool)
+
+    return _image, _mask
+
+def caldotprod(prediction, _mask, groundtruth):
     # normalize prediction
-    _prediction = ((_prediction / 255.0) - 0.5) * 2.
+    _prediction = ((prediction / 255.0) - 0.5) * 2.
     _pred_norm = tf.sqrt(tf.reduce_sum(tf.multiply(_prediction, _prediction), axis=3, keep_dims=True))
     _pred_normalized = tf.div(_prediction, tf.tile(_pred_norm, [1,1,1,3]))
     # normalize groundtruth
-    _groundtruth = ((_groundtruth / 255.0) - 0.5) * 2.
+    _groundtruth = ((groundtruth / 255.0) - 0.5) * 2.
     _gt_norm = tf.sqrt(tf.reduce_sum(tf.multiply(_groundtruth, _groundtruth), axis=3, keep_dims=True))
     _gt_normalized = tf.div(_groundtruth, tf.tile(_gt_norm, [1,1,1,3]))
     # calculate dot product = cos(theta)
@@ -71,15 +88,22 @@ def calcloss(_prediction, _mask, _groundtruth):
     _dotprod = tf.where(tf.is_nan(_dotprod), tf.zeros_like(_dotprod)-1, _dotprod)
     # clip to -1,+1
     _dotprod = tf.clip_by_value(_dotprod, -1., 1.)
+
+    return _dotprod, prediction, groundtruth
+
+# prediction 0-255, groundtruth 0-255
+def calcloss(_prediction, _mask, _groundtruth):
+    
+    _dotprod, _, _ = caldotprod(_prediction, _mask, _groundtruth)
     # calculate angles
     _ang     = tf.acos(_dotprod)
 
-    loss = -tf.reduce_sum(_dotprod) / batch_size
+    loss = -tf.reduce_mean(_dotprod)
     # loss = tf.reduce_mean(_ang)
 
     return loss
 
-# vgg/conv1_1_W:0 -- vgg origin
+# vgg/conv1_1_W -- vgg origin
 # vgg/conv1_1/kernel:0 -- var
 def getVggStoredName(var):
     # get name stored in vgg origin
@@ -91,13 +115,12 @@ def getVggStoredName(var):
         print("Error: No kernel or bias")
 
 # Create the neural network
-def conv_net(x, dropout, is_training):
-    # Define a scope for reusing the variables
-    # MNIST data input is a 1-D vector of 784 features (28*28 pixels)
+def conv_net(x, dropout, is_training, reuse):
+
     # Reshape to match picture format [Height x Width x Channel]
     # Tensor input become 4-D: [Batch Size, Height, Width, Channel]
     x = tf.reshape(x, shape=[-1, 128, 128, 3], name='inputTensor')
-    with tf.variable_scope('vgg'):
+    with tf.variable_scope('vgg', reuse = reuse):
 
         # Convolution Layer with 64 filters and a kernel size of 3
         conv1_1 = tf.layers.conv2d(inputs = x,
@@ -162,7 +185,7 @@ def conv_net(x, dropout, is_training):
         # Upsample
         vgg_out = tf.image.resize_bilinear(fc2, size=(32, 32))
 
-    with tf.variable_scope('scale2'): 
+    with tf.variable_scope('scale2', reuse = reuse): 
 
         conv2_img = tf.layers.conv2d(inputs = x,
             filters=96, kernel_size=5, activation=tf.nn.relu, padding='same', name='conv2_img')
@@ -202,37 +225,86 @@ def conv_net(x, dropout, is_training):
     ###### scale 3
     return out
 
-trainingSetNames = ['./trainTFRecords/' + str(I) +'.tfrecords' for I in range(0,20000)]
+#                                                                         #
+# #############################   DATASET   ############################# #
+#                                                                         #
+num_train_set = 18000
+num_self_test_set = 20000-num_train_set
+test_batch_size = 100
+num_eval_set = 2000
+
+trainingSetFiles = ['./trainTFRecords/' + str(I) +'.tfrecords' for I in range(0,num_train_set)]
+slfTestSetFiles = ['./trainTFRecords/' + str(I) +'.tfrecords' for I in range(num_train_set,20000)]
+evalSetFiles = ['./testTFRecords/' + str(I) +'.tfrecords' for I in range(0,2000)]
+
 # construct dataset
-dataset = tf.data.TFRecordDataset(datasetName).map(_parser).shuffle(buffer_size=4096).batch(batch_size)
+# training set
+trainSet = tf.data.TFRecordDataset(trainSetName).map(_parser).shuffle(buffer_size=1800).repeat().batch(batch_size)
+it_train = trainSet.make_initializable_iterator()
 
-it = dataset.make_initializable_iterator()
+# self-testing set
+selftestSet = tf.data.TFRecordDataset(slfTestSetName).map(_parser).repeat().batch(test_batch_size)
+it_selftest = selftestSet.make_initializable_iterator()
 
+# test set (to upload)
+evalSet = tf.data.TFRecordDataset(evalSetName).map(_parser_eval).batch(test_batch_size)
+it_eval = evalSet.make_initializable_iterator()
+
+#                                                                         #
+# ##############################   BATCH   ############################## #
+#                                                                         #
+
+# get training/testing data
 # N*128*128*3-(0,1), N*128*128-(0/1), N*128*128*3-(-1,1)
-imageIn, maskIn, gtIn = it.get_next()
-print(imageIn.shape, maskIn.shape, gtIn.shape)
+imageIn, maskIn, gtIn = it_train.get_next()
+imageIn_slftest, maskIn_slftest, gtIn_slftest = it_selftest.get_next()
+imageIn_eval, maskIn_eval = it_eval.get_next() 
+
+#                                                                         #
+# ###########################   PRED & LOSS   ########################### #
+#                                                                         #
 
 # Construct model
-prediction = conv_net(imageIn, Drop_rate, Is_training)
-# Define loss and optimizer
+prediction = conv_net(imageIn, Drop_rate, is_training=True, reuse=False)
 loss_op = calcloss(prediction, maskIn, gtIn)
 
+# Construct test graph
+prediction_slftest = conv_net(imageIn_slftest, dropout=0.0, is_training=False, reuse=True)
+loss_test_dotprod_op = caldotprod(prediction_slftest, maskIn_slftest, gtIn_slftest)
+
+# Construct eval graph
+prediction_eval = conv_net(imageIn_eval, dropout=0.0, is_training=False, reuse=True)
+
+#                                                                         #
+# #############################   VAR MAN   ############################# #
+#                                                                         #
+
 # Manage vars
+
+# Vgg var
 vggVar_dict = {getVggStoredName(val):val for val in tf.global_variables() \
             if 'vgg/conv' in val.name and 'Adam' not in val.name}
 vggRestorer = tf.train.Saver(vggVar_dict)
 vggVar_list = vggVar_dict.values()
-trainVar_list = [var for var in tf.global_variables() if var not in vggVar_list]
 
-# for key, val in vggVar_dict.items():
-#     print(key, val)
-# for t in trainVar_list:
-#     print(t.name, t.shape)
-# exit(0)
+# scale2Var
+scale2Var_list = [var for var in tf.global_variables() if var not in vggVar_list]
+scale2Restorer = tf.train.Saver(scale2Var_list)
+
+for key, val in vggVar_dict.items():
+    print(key, val)
+for t in scale2Var_list:
+    print(t.name, t.shape)
+#exit(0)
+
+#                                                                          #
+# ###########################   TRAIN & LOSS   ########################### #
+#                                                                          #
 
 # Generate train op
 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
-train_op = optimizer.minimize(loss_op, var_list=trainVar_list)
+train_op = optimizer.minimize(loss_op, var_list=scale2Var_list)
+# train_op = optimizer.minimize(loss_op)
 
 # Initialize the variables (i.e. assign their default value)
 init_val = tf.global_variables_initializer()
@@ -240,36 +312,79 @@ init_val = tf.global_variables_initializer()
 # Start training
 with tf.Session() as sess:
 
+    writer = tf.summary.FileWriter("./graph", sess.graph)
+
     # Run the initializer
-    sess.run([init_val, it.initializer], feed_dict={datasetName: trainingSetNames})
+    sess.run(tf.group(init_val, it_train.initializer, it_selftest.initializer, it_eval.initializer), \
+            feed_dict={
+                        trainSetName:   trainingSetFiles,
+                        slfTestSetName: slfTestSetFiles,
+                        evalSetName:    evalSetFiles
+            }
+    )
     vggRestorer.restore(sess, "./savedModel/vgg_original.ckpt")
+    # scale2Restorer.restore(sess, "./savedModel/scale2.ckpt")
+
+    # image_debug, mask_debug, gt_debug = sess.run([imageIn, maskIn, gtIn])
+
+    # image_debug = np.array(image_debug)
+    # mask_debug = np.array(mask_debug).astype(np.int32)*255
+    # gt_debug = np.array(gt_debug)
+    
+    # for i in range(0,len(image_debug)):
+    #     scipy.misc.imsave('./tmp/image_debug'+str(i)+'.png',image_debug[i,:,:,:])
+    #     scipy.misc.imsave('./tmp/mask_debug'+str(i)+'.png',mask_debug[i,:,:])
+    #     scipy.misc.imsave('./tmp/gt_debug'+str(i)+'.png',gt_debug[i,:,:,:])
+    # exit(0)
 
     # Run
     step = 1
+    epoch = 1
     while True:
     # for i in range(0,10):
         try:
             # Run optimization op (backprop)
-            loss, _ = sess.run([loss_op, train_op], feed_dict={Drop_rate: 0.5, Is_training: True})
+            loss, _ = sess.run([loss_op, train_op], feed_dict={Drop_rate: 0.5})
+            # Display training loss
             if step % display_step == 0 or step == 1:
-                print("Step " + str(step) + ", Minibatch Loss= " + \
-                      "{:.4f}".format(loss))
-                # print(prediction_debug.shape, gtin_debug.shape, maskIn_debug.shape, dotprod_debug)
-                # scipy.misc.imsave('prediction_debug.png', prediction_debug[0,:,:,:])
-                # scipy.misc.imsave('gt.png', gtin_debug[0,:,:,:])
-                # scipy.misc.imsave('mask.png', np.array(maskIn_debug[0,:,:]).astype(np.uint8))
+                print("Epoch " + str(epoch) + ", " + \
+                      "Step " + str(step) + ", Mini batch Loss= " + "{:.4f}".format(loss))
+            # Display self-test loss
+            if step % test_step == 0:
+                dotprod_selftest_cum = []
+                for test_batch_i in range(0, int(num_self_test_set/test_batch_size)):
+                    dotprod_part, pred_debug, gt_debug = sess.run(loss_test_dotprod_op)
+                    dotprod_selftest = np.array(dotprod_part)
+                    dotprod_selftest_cum = np.concatenate((dotprod_selftest_cum,dotprod_selftest),axis=0)
+                    
+                    # SAVE DEBUG IMAGES
+                    for id_in_batch in range(0,len(pred_debug)):
+                        scipy.misc.imsave('./debug_out/test_pred' + str(test_batch_size * test_batch_i + id_in_batch) + '.png', pred_debug[id_in_batch,:,:,:])
+                        scipy.misc.imsave('./debug_out/test_gt' + str(test_batch_size * test_batch_i + id_in_batch) + '.png',   gt_debug[id_in_batch,:,:,:])
+
+                loss_selftest = -np.mean(dotprod_selftest_cum.astype(np.float32))
+                print("Epoch " + str(epoch) + ", test loss: " + "{:.4f}".format(loss_selftest))
+
+            if step*batch_size % num_train_set == 0:
+                epoch = epoch + 1
+
+            if epoch > num_epochs:
+                break
+
             step = step + 1
+
         except tf.errors.OutOfRangeError as e:
             break
 
-    print("Optimization Finished!")
-    # Create saver
-    # saver = tf.train.Saver()
-    # save_path = saver.save(sess, "./models/model1.ckpt")
-    # saver.restore(sess, "./models/model1.ckpt")
+    save_path = scale2Restorer.save(sess, "./savedModel/scale2.ckpt")
+    print("Saved scale2 var at " + save_path)
 
-    # sess.run(test_init_op)
-    # # Calculate accuracy for 256 MNIST test images
-    # print("Testing Accuracy:", \
-    #     sess.run(accuracy, feed_dict={Drop_rate: 0.5, Is_training: False}))
+    for eval_batch_i in range(0, int(num_eval_set/test_batch_size)):
+        pred_eval = sess.run(prediction_eval)
+        # SAVE EVAL IMAGES
+        for id_in_batch in range(0,len(pred_eval)):
+            scipy.misc.imsave('./submit_out/' + str(test_batch_size * eval_batch_i + id_in_batch) + '.png', pred_eval[id_in_batch,:,:,:])
+
+    print("Optimization Finished!")
+
     sess.close()

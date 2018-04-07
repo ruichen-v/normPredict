@@ -9,7 +9,9 @@ import sys
 pathTrainColor = './img/train/color'
 pathTrainMask  = './img/train/mask'
 pathTrainGT    = './img/train/normal'
-trainRecordName = 'train.tfrecords'
+
+pathTestColor = './img/test/color'
+pathTestMask = './img/test/mask'
 
 def _int64_feature(value):
   return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
@@ -28,7 +30,7 @@ def _scan_png_files(folder):
 
     return ret
 
-def loadDataAndParse(_imageDir, _maskDir, _gtDir):
+def genTRRecord_train(_imageDir, _maskDir, _gtDir):
     _image_names = _scan_png_files(_imageDir)
     _mask_names = _scan_png_files(_maskDir)
     _gt_names = _scan_png_files(_gtDir)
@@ -46,7 +48,6 @@ def loadDataAndParse(_imageDir, _maskDir, _gtDir):
         writer = tf.python_io.TFRecordWriter('./trainTFRecords/' + _im_name.replace('.png','.tfrecords'))
         # image 0-1 float32
         _image = imageio.imread(os.path.join(_imageDir, _im_name)).astype(np.float32)
-        _image = (_image / 255.0)
         # mask int 0/1
         _mask = imageio.imread(os.path.join(_maskDir, _im_name)).astype(np.float32) # Greyscale image
         _mask = (_mask != 0).astype(np.int64)
@@ -68,4 +69,37 @@ def loadDataAndParse(_imageDir, _maskDir, _gtDir):
 
     sys.stdout.flush()
 
-loadDataAndParse(pathTrainColor, pathTrainMask, pathTrainGT)
+def genTRRecord_test(_imageDir, _maskDir):
+    _image_names = _scan_png_files(_imageDir)
+    _mask_names = _scan_png_files(_maskDir)
+
+    _pred_diff_mask = set(_image_names).difference(_mask_names)
+    assert len(_pred_diff_mask) == 0, \
+        'No corresponding mask file for the following files:\n' + '\n'.join(_pred_diff_mask)
+
+    _cur_id = 0
+    for _im_name in _image_names:
+        print('Proccessing file {} - {}'.format(_im_name, _cur_id))
+        writer = tf.python_io.TFRecordWriter('./testTFRecords/' + _im_name.replace('.png','.tfrecords'))
+        # image 0-1 float32
+        _image = imageio.imread(os.path.join(_imageDir, _im_name)).astype(np.float32)
+        # mask int 0/1
+        _mask = imageio.imread(os.path.join(_maskDir, _im_name)).astype(np.float32) # Greyscale image
+        _mask = (_mask != 0).astype(np.int64)
+
+        feature = {
+            'image': _bytes_feature(tf.compat.as_bytes(_image.tostring())),
+            'mask': _bytes_feature(tf.compat.as_bytes(_mask.tostring()))
+        }
+
+        # Create an example protocol buffer
+        example = tf.train.Example(features=tf.train.Features(feature=feature))
+        # Serialize to string and write on the file
+        writer.write(example.SerializeToString())
+        _cur_id = _cur_id+1
+        writer.close()
+
+    sys.stdout.flush()
+
+genTRRecord_train(pathTrainColor, pathTrainMask, pathTrainGT)
+genTRRecord_test(pathTestColor, pathTestMask)
