@@ -46,11 +46,10 @@ def genTRRecord_train(_imageDir, _maskDir, _gtDir):
     for _im_name in _image_names:
         print('Proccessing file {} - {}'.format(_im_name, _cur_id))
         writer = tf.python_io.TFRecordWriter('./trainTFRecords/' + _im_name.replace('.png','.tfrecords'))
-        # image 0-1 float32
+        # image 0-255 float32
         _image = imageio.imread(os.path.join(_imageDir, _im_name)).astype(np.float32)
-        # mask int 0/1
+        # mask 0/255 float32
         _mask = imageio.imread(os.path.join(_maskDir, _im_name)).astype(np.float32) # Greyscale image
-        _mask = (_mask != 0).astype(np.int64)
         # gt 0-255 float32
         _gt = imageio.imread(os.path.join(_gtDir, _im_name)).astype(np.float32)
 
@@ -83,9 +82,8 @@ def genTRRecord_test(_imageDir, _maskDir):
         writer = tf.python_io.TFRecordWriter('./testTFRecords/' + _im_name.replace('.png','.tfrecords'))
         # image 0-1 float32
         _image = imageio.imread(os.path.join(_imageDir, _im_name)).astype(np.float32)
-        # mask int 0/1
+        # mask 0/255 float32
         _mask = imageio.imread(os.path.join(_maskDir, _im_name)).astype(np.float32) # Greyscale image
-        _mask = (_mask != 0).astype(np.int64)
 
         feature = {
             'image': _bytes_feature(tf.compat.as_bytes(_image.tostring())),

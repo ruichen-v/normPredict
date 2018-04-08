@@ -1,0 +1,63 @@
+vgg/conv4_3_W <tf.Variable 'vgg/conv4_3/kernel:0' shape=(3, 3, 512, 512) dtype=float32_ref>
+vgg/conv2_2_b <tf.Variable 'vgg/conv2_2/bias:0' shape=(128,) dtype=float32_ref>
+vgg/conv2_1_W <tf.Variable 'vgg/conv2_1/kernel:0' shape=(3, 3, 64, 128) dtype=float32_ref>
+vgg/conv3_1_b <tf.Variable 'vgg/conv3_1/bias:0' shape=(256,) dtype=float32_ref>
+vgg/conv4_3_b <tf.Variable 'vgg/conv4_3/bias:0' shape=(512,) dtype=float32_ref>
+vgg/conv5_1_b <tf.Variable 'vgg/conv5_1/bias:0' shape=(512,) dtype=float32_ref>
+vgg/conv4_2_b <tf.Variable 'vgg/conv4_2/bias:0' shape=(512,) dtype=float32_ref>
+vgg/conv5_3_W <tf.Variable 'vgg/conv5_3/kernel:0' shape=(3, 3, 512, 512) dtype=float32_ref>
+vgg/conv5_3_b <tf.Variable 'vgg/conv5_3/bias:0' shape=(512,) dtype=float32_ref>
+vgg/conv5_2_W <tf.Variable 'vgg/conv5_2/kernel:0' shape=(3, 3, 512, 512) dtype=float32_ref>
+vgg/conv4_1_W <tf.Variable 'vgg/conv4_1/kernel:0' shape=(3, 3, 256, 512) dtype=float32_ref>
+vgg/conv3_2_b <tf.Variable 'vgg/conv3_2/bias:0' shape=(256,) dtype=float32_ref>
+vgg/conv4_2_W <tf.Variable 'vgg/conv4_2/kernel:0' shape=(3, 3, 512, 512) dtype=float32_ref>
+vgg/conv3_2_W <tf.Variable 'vgg/conv3_2/kernel:0' shape=(3, 3, 256, 256) dtype=float32_ref>
+vgg/conv4_1_b <tf.Variable 'vgg/conv4_1/bias:0' shape=(512,) dtype=float32_ref>
+vgg/conv1_1_W <tf.Variable 'vgg/conv1_1/kernel:0' shape=(3, 3, 3, 64) dtype=float32_ref>
+vgg/conv3_3_b <tf.Variable 'vgg/conv3_3/bias:0' shape=(256,) dtype=float32_ref>
+vgg/conv1_2_W <tf.Variable 'vgg/conv1_2/kernel:0' shape=(3, 3, 64, 64) dtype=float32_ref>
+vgg/conv2_1_b <tf.Variable 'vgg/conv2_1/bias:0' shape=(128,) dtype=float32_ref>
+vgg/conv3_3_W <tf.Variable 'vgg/conv3_3/kernel:0' shape=(3, 3, 256, 256) dtype=float32_ref>
+vgg/conv2_2_W <tf.Variable 'vgg/conv2_2/kernel:0' shape=(3, 3, 128, 128) dtype=float32_ref>
+vgg/conv1_2_b <tf.Variable 'vgg/conv1_2/bias:0' shape=(64,) dtype=float32_ref>
+vgg/conv3_1_W <tf.Variable 'vgg/conv3_1/kernel:0' shape=(3, 3, 128, 256) dtype=float32_ref>
+vgg/conv5_1_W <tf.Variable 'vgg/conv5_1/kernel:0' shape=(3, 3, 512, 512) dtype=float32_ref>
+vgg/conv1_1_b <tf.Variable 'vgg/conv1_1/bias:0' shape=(64,) dtype=float32_ref>
+vgg/conv5_2_b <tf.Variable 'vgg/conv5_2/bias:0' shape=(512,) dtype=float32_ref>
+
+
+vgg/fc1/kernel (8192, 4096)
+vgg/fc1/bias (4096,)
+vgg/fc2/kernel (4096, 4096)
+vgg/fc2/bias (4096,)
+
+
+scale2/conv2_img/kernel (5, 5, 3, 96)
+scale2/conv2_img/bias (96,)
+scale2/conv2_mask/kernel (5, 5, 1, 48)
+scale2/conv2_mask/bias (48,)
+scale2/conv1/kernel (5, 5, 208, 208)
+scale2/conv1/bias (208,)
+scale2/conv2/kernel (3, 3, 208, 64)
+scale2/conv2/bias (64,)
+scale2/conv3/kernel (3, 3, 64, 64)
+scale2/conv3/bias (64,)
+scale2/conv4/kernel (3, 3, 64, 64)
+scale2/conv4/bias (64,)
+scale2/conv5/kernel (3, 3, 64, 3)
+scale2/conv5/bias (3,)
+
+
+
+scale3/conv3_img/kernel (5, 5, 3, 96)
+scale3/conv3_img/bias (96,)
+scale3/conv3_mask/kernel (5, 5, 1, 48)
+scale3/conv3_mask/bias (48,)
+scale3/conv1/kernel (9, 9, 147, 147)
+scale3/conv1/bias (147,)
+scale3/conv2/kernel (5, 5, 147, 64)
+scale3/conv2/bias (64,)
+scale3/conv3/kernel (5, 5, 64, 64)
+scale3/conv3/bias (64,)
+scale3/conv4/kernel (5, 5, 64, 3)
+scale3/conv4/bias (3,)

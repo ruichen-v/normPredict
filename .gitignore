@@ -5,7 +5,9 @@ savedModel/*
 trainTFRecords/*
 testTFRecords/*
 tmp/*
-debug_out/*
+test_pred/*
+test_gt/*
+test_mask/*
 deprecated/*
 graph/*
 output.txt
