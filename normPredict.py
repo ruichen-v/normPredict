@@ -20,6 +20,16 @@ import time
 IMAGE_SIZE = 128
 NUM_CHANNELS = 1
 
+# Training Parameters
+lr_vgg = 0.00005 # 0.0005
+lr_vgg_fc = 0.001
+
+lr_2_mid = 0.0005
+lr_2_end = 0.00005
+
+lr_3_mid = 0.0005
+lr_3_end = 0.0001 #0.0002
+
 # tf Graph input
 trainSetName = tf.placeholder(tf.string, shape=[None])
 slfTestSetName = tf.placeholder(tf.string,  shape=[None])
@@ -195,7 +205,7 @@ def conv_net(img, mask, dropout, is_training, reuse):
         fc2 = tf.nn.relu(fc2)
 
         # Upsample
-        vgg_out = tf.image.resize_bilinear(fc2, size=(32, 32))
+        vgg_out = tf.image.resize_nearest_neighbor(fc2, size=(32, 32))
 
 
     with tf.variable_scope('scale2', reuse = reuse): 
@@ -239,16 +249,16 @@ def conv_net(img, mask, dropout, is_training, reuse):
             filters=3, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv5')
         
         # Upsample
-        scale2_out = tf.image.resize_bilinear(conv5, size=(128, 128))
+        scale2_out = tf.image.resize_nearest_neighbor(conv5, size=(128, 128))
 
 
     with tf.variable_scope('scale3', reuse = reuse):
 
         conv3_img = tf.layers.conv2d(inputs = img,
-            filters=96, kernel_size=9, activation=tf.nn.relu, padding='same', name='conv3_img')
+            filters=96, kernel_size=5, activation=tf.nn.relu, padding='same', name='conv3_img')
 
         conv3_mask = tf.layers.conv2d(inputs = mask,
-            filters=48, kernel_size=9, activation=tf.nn.relu, padding='same', name='conv3_mask')
+            filters=48, kernel_size=5, activation=tf.nn.relu, padding='same', name='conv3_mask')
 
         padding_conv3_img = tf.constant([[0, 0,], [0, 0], [0, 0], [0, 48+3]])
         conv3_img = tf.pad(conv3_img, padding_conv3_img, "CONSTANT")
@@ -261,19 +271,18 @@ def conv_net(img, mask, dropout, is_training, reuse):
 
         stack3 = conv3_img + conv3_mask + scale2_out_padded
 
-        # Convolution Layer with 96+3 filters and a kernel size of 9
+        # Convolution Layer with 96+48+3 filters and a kernel size of 5
         conv1 = tf.layers.conv2d(inputs = stack3,
-            filters=96+48+3, kernel_size=9, activation=tf.nn.relu, padding='same', name='conv1')
-        # Convolution Layer with 64 filters and a kernel size of 5
+            filters=96+48+3, kernel_size=5, activation=tf.nn.relu, padding='same', name='conv1')
+        # Convolution Layer with 64 filters and a kernel size of 3
         conv2 = tf.layers.conv2d(inputs = conv1,
-            filters=64, kernel_size=5, activation=tf.nn.relu, padding='same', name='conv2')
-        # Convolution Layer with 64 filters and a kernel size of 5
+            filters=64, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv2')
+        # Convolution Layer with 64 filters and a kernel size of 3
         conv3 = tf.layers.conv2d(inputs = conv2,
-            filters=64, kernel_size=5, activation=tf.nn.relu, padding='same', name='conv3')
-        # Convolution Layer with 64 filters and a kernel size of 5
+            filters=64, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv3')
+        # Convolution Layer with 3 filters and a kernel size of 3
         conv4 = tf.layers.conv2d(inputs = conv3,
-            filters=3, kernel_size=5, activation=tf.nn.relu, padding='same', name='conv4')
-        # Convolution Layer with 3 filters and a kernel size of 5
+            filters=3, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv4')
 
     out = scale2_out
     return out
@@ -293,7 +302,7 @@ evalSetFiles = ['./testTFRecords/' + str(I) +'.tfrecords' for I in range(0,2000)
 
 # construct dataset
 # training set
-trainSet = tf.data.TFRecordDataset(trainSetName).map(_parser).shuffle(buffer_size=1800).repeat().batch(batch_size)
+trainSet = tf.data.TFRecordDataset(trainSetName).map(_parser).shuffle(buffer_size=3600).repeat().batch(batch_size)
 it_train = trainSet.make_initializable_iterator()
 
 # self-testing set
@@ -399,18 +408,8 @@ scale3Restorer = tf.train.Saver(scale3Var_list)
 # ###########################   TRAIN & LOSS   ########################### #
 #                                                                          #
 
-# Training Parameters
-lr_vgg = 0.0003 # 0.0005
-lr_vgg_fc = 0.001
-
-lr_2_mid = 0.001
-lr_2_end = 0.0005 # 0.005
-
-lr_3_mid = 0.0008
-lr_3_end = 0.0002 #0.0002
-
-num_epochs = 10
-display_step = 100
+num_epochs = 3
+display_step = 20
 test_step = num_train_set/batch_size # 1 per epoch
 
 # Generate train op
@@ -434,12 +433,21 @@ grads = tf.gradients(loss_op,
     # scale3EndVar_list
 )
 
+
+# part 2
+# grads_vggFC   = grads[0:4]
+# grads_s2mid   = grads[4:10]
+# grads_s2end   = grads[10:18]
+
+# vgg+2
 grads_vggConv = grads[0:26]
 grads_vggFC   = grads[26:30]
 grads_s2mid   = grads[30:36]
 grads_s2end   = grads[36:44]
-# grads_s3mid   = grads[44:48]
-# grads_s3end   = grads[48:56]
+
+# part 3
+# grads_s3mid   = grads[0:4]
+# grads_s3end   = grads[4:12]
 
 train_vggConv = opt_vgg.apply_gradients(zip(grads_vggConv, vggConvVar_list))
 train_vggFC = opt_vgg_fc.apply_gradients(zip(grads_vggFC, vggFCVar_list))
@@ -474,17 +482,19 @@ with tf.Session() as sess:
             }
     )
     vggConvRestorer.restore(sess, "./savedModel/vgg_original.ckpt")
-    scale2Restorer.restore(sess, "./savedModel/scale2.ckpt")
+    # scale2Restorer.restore(sess, "./savedModel/scale2_BwVgg.ckpt")
 
     # Run
     step = 1
     epoch = 1
     tic = time.time()
+    loss_cum = 0
     while True:
     # for i in range(0,10):
         try:
             # Run optimization op (backprop)
             loss, _ = sess.run([loss_op, train_op], feed_dict={Drop_rate: 0.5})
+            loss_cum = loss_cum + loss
             # Display training loss
             if step % display_step == 0 or step == 1:
                 print("Epoch " + str(epoch) + ", " + \
@@ -507,30 +517,34 @@ with tf.Session() as sess:
                         scipy.misc.imsave('./test_gt/' + str(test_batch_size * test_batch_i + id_in_batch) + '.png',   gt_selftest[id_in_batch,:,:,:])
 
                 loss_selftest = -np.mean(dotprod_selftest_cum.astype(np.float32))
-                print("Epoch " + str(epoch) + ", test loss: " + "{:.4f}".format(loss_selftest))
+                train_loss = loss_cum/test_step
+                print("Epoch " + str(epoch) + ", test loss: " + "{:.4f}".format(loss_selftest) + ", train loss: " + "{:.4f}".format(train_loss))
+                loss_cum = 0
 
-            if step*batch_size % num_train_set == 0:
                 toc = time.time() - tic
                 print("--------------- Epoch {} done in {:.4f} minutes ---------------".format(epoch, toc/60.))
                 tic = time.time()
+
                 epoch = epoch + 1
 
-            if epoch > num_epochs:
-                break
+                save_pathVgg = vggConvRestorer.save(sess, "./savedModel/vgg_BwScale2.ckpt")
+                print("Saved vgg var at " + save_pathVgg)
+
+                save_path2 = scale2Restorer.save(sess, "./savedModel/scale2_BwVgg.ckpt")
+                print("Saved scale2 var at " + save_path2)
+
+                # save_path3 = scale3Restorer.save(sess, "./savedModel/scale3_B.ckpt")
+                # print("Saved scale3 var at " + save_path3)
+
+                if loss_selftest > train_loss + 0.01:
+                    break
 
             step = step + 1
 
         except tf.errors.OutOfRangeError as e:
             break
 
-    save_pathVgg = vggConvRestorer.save(sess, "./savedModel/vgg_new.ckpt")
-    print("Saved vgg var at " + save_pathVgg)
-
-    save_path2 = scale2Restorer.save(sess, "./savedModel/scale2_difflr.ckpt")
-    print("Saved scale2 var at " + save_path2)
-
-    # save_path3 = scale2Restorer.save(sess, "./savedModel/scale3.ckpt")
-    # print("Saved scale3 var at " + save_path3)
+    
 
     for eval_batch_i in range(0, int(num_eval_set/test_batch_size)):
         pred_eval = sess.run(prediction_eval)
