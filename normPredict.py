@@ -21,14 +21,14 @@ IMAGE_SIZE = 128
 NUM_CHANNELS = 1
 
 # Training Parameters
-lr_vgg = 0.00005
-lr_vgg_fc = 0.001
+lr_vgg = 0.00001
+lr_vgg_fc = 0.0001
 
-lr_2_mid = 0.0005
-lr_2_end = 0.00005
+lr_2_mid = 0.00005
+lr_2_end = 0.00001
 
-lr_3_mid = 0.001
-lr_3_end = 0.0001 #0.0002
+lr_3_mid = 0.00005
+lr_3_end = 0.00001 #0.0002
 
 # tf Graph input
 trainSetName = tf.placeholder(tf.string, shape=[None])
@@ -255,10 +255,14 @@ def conv_net(img, mask, dropout, is_training, reuse):
     with tf.variable_scope('scale3', reuse = reuse):
 
         conv3_img = tf.layers.conv2d(inputs = img,
-            filters=96, kernel_size=5, activation=tf.nn.relu, padding='same', name='conv3_img')
+            filters=96, kernel_size=9, activation=tf.nn.relu,
+            kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr_3_end),
+            padding='same', name='conv3_img')
 
         conv3_mask = tf.layers.conv2d(inputs = mask,
-            filters=48, kernel_size=5, activation=tf.nn.relu, padding='same', name='conv3_mask')
+            filters=48, kernel_size=9, activation=tf.nn.relu,
+            kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr_3_end),
+            padding='same', name='conv3_mask')
 
         padding_conv3_img = tf.constant([[0, 0,], [0, 0], [0, 0], [0, 48+3]])
         conv3_img = tf.pad(conv3_img, padding_conv3_img, "CONSTANT")
@@ -271,18 +275,26 @@ def conv_net(img, mask, dropout, is_training, reuse):
 
         stack3 = conv3_img + conv3_mask + scale2_out_padded
 
-        # Convolution Layer with 96+48+3 filters and a kernel size of 5
+        # Convolution Layer with 96+48+3 filters and a kernel size of 9
         conv1 = tf.layers.conv2d(inputs = stack3,
-            filters=96+48+3, kernel_size=5, activation=tf.nn.relu, padding='same', name='conv1')
-        # Convolution Layer with 64 filters and a kernel size of 3
+            filters=96+48+3, kernel_size=9, activation=tf.nn.relu,
+            kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr_3_end),
+            padding='same', name='conv1')
+        # Convolution Layer with 64 filters and a kernel size of 5
         conv2 = tf.layers.conv2d(inputs = conv1,
-            filters=64, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv2')
-        # Convolution Layer with 64 filters and a kernel size of 3
+            filters=64, kernel_size=5, activation=tf.nn.relu,
+            kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr_3_mid),
+            padding='same', name='conv2')
+        # Convolution Layer with 64 filters and a kernel size of 5
         conv3 = tf.layers.conv2d(inputs = conv2,
-            filters=64, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv3')
-        # Convolution Layer with 3 filters and a kernel size of 3
+            filters=64, kernel_size=5, activation=tf.nn.relu,
+            kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr_3_mid),
+            padding='same', name='conv3')
+        # Convolution Layer with 3 filters and a kernel size of 5
         conv4 = tf.layers.conv2d(inputs = conv3,
-            filters=3, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv4')
+            filters=3, kernel_size=5, activation=tf.nn.relu,
+            kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr_3_end),
+            padding='same', name='conv4')
 
     out = conv4
     return out
@@ -409,26 +421,26 @@ scale3Restorer = tf.train.Saver(scale3Var_list)
 #                                                                          #
 
 num_epochs = 3
-display_step = 20
+display_step = 10
 test_step = num_train_set/batch_size # 1 per epoch
 
 # Generate train op
 
 # vgg
-# opt_vgg    = tf.train.AdamOptimizer(learning_rate=lr_vgg)
+opt_vgg    = tf.train.AdamOptimizer(learning_rate=lr_vgg)
 # part 2
-# opt_vgg_fc = tf.train.AdamOptimizer(learning_rate=lr_vgg_fc)
-# opt_2mid   = tf.train.AdamOptimizer(learning_rate=lr_2_mid)
-# opt_2end   = tf.train.AdamOptimizer(learning_rate=lr_2_end)
+opt_vgg_fc = tf.train.AdamOptimizer(learning_rate=lr_vgg_fc)
+opt_2mid   = tf.train.AdamOptimizer(learning_rate=lr_2_mid)
+opt_2end   = tf.train.AdamOptimizer(learning_rate=lr_2_end)
 # part 3
 opt_3mid   = tf.train.AdamOptimizer(learning_rate=lr_3_mid)
 opt_3end   = tf.train.AdamOptimizer(learning_rate=lr_3_end)
 
 grads = tf.gradients(loss_op, 
-    # vggConvVar_list + 
-    # vggFCVar_list +
-    # scale2MidVar_list +
-    # scale2EndVar_list
+    vggConvVar_list + 
+    vggFCVar_list +
+    scale2MidVar_list +
+    scale2EndVar_list +
     scale3MidVar_list +
     scale3EndVar_list
 )
@@ -446,21 +458,29 @@ grads = tf.gradients(loss_op,
 # grads_s2end   = grads[36:44]
 
 # part 3
-grads_s3mid   = grads[0:4]
-grads_s3end   = grads[4:12]
+# grads_s3mid   = grads[0:4]
+# grads_s3end   = grads[4:12]
 
-# train_vggConv = opt_vgg.apply_gradients(zip(grads_vggConv, vggConvVar_list))
-# train_vggFC = opt_vgg_fc.apply_gradients(zip(grads_vggFC, vggFCVar_list))
-# train_2mid = opt_2mid.apply_gradients(zip(grads_s2mid, scale2MidVar_list))
-# train_2end = opt_2end.apply_gradients(zip(grads_s2end, scale2EndVar_list))
+# alll
+grads_vggConv = grads[0:26]
+grads_vggFC   = grads[26:30]
+grads_s2mid   = grads[30:36]
+grads_s2end   = grads[36:44]
+grads_s3mid   = grads[44:48]
+grads_s3end   = grads[48:56]
+
+train_vggConv = opt_vgg.apply_gradients(zip(grads_vggConv, vggConvVar_list))
+train_vggFC = opt_vgg_fc.apply_gradients(zip(grads_vggFC, vggFCVar_list))
+train_2mid = opt_2mid.apply_gradients(zip(grads_s2mid, scale2MidVar_list))
+train_2end = opt_2end.apply_gradients(zip(grads_s2end, scale2EndVar_list))
 train_3mid = opt_3mid.apply_gradients(zip(grads_s3mid, scale3MidVar_list))
 train_3end = opt_3end.apply_gradients(zip(grads_s3end, scale3EndVar_list))
 
 train_op = tf.group(
-    # train_vggConv, 
-    # train_vggFC, 
-    # train_2mid, 
-    # train_2end 
+    train_vggConv, 
+    train_vggFC, 
+    train_2mid, 
+    train_2end, 
     train_3mid, 
     train_3end
 )
@@ -481,14 +501,16 @@ with tf.Session() as sess:
                         evalSetName:    evalSetFiles
             }
     )
-    vggConvRestorer.restore(sess, "./savedModel/vgg_BwScale2.ckpt")
-    scale2Restorer.restore(sess, "./savedModel/scale2_BwVgg.ckpt")
+    vggConvRestorer.restore(sess, "./savedModel/vgg_new.ckpt")
+    scale2Restorer.restore(sess, "./savedModel/scale2_difflr.ckpt")
+    scale3Restorer.restore(sess, "./savedModel/scale3.ckpt")
 
     # Run
     step = 1
     epoch = 1
     tic = time.time()
     loss_cum = 0
+    loss_selftest_prev = 1
     while True:
     # for i in range(0,10):
         try:
@@ -527,17 +549,19 @@ with tf.Session() as sess:
 
                 epoch = epoch + 1
 
-                # save_pathVgg = vggConvRestorer.save(sess, "./savedModel/vgg_BwScale2.ckpt")
-                # print("Saved vgg var at " + save_pathVgg)
+                save_pathVgg = vggConvRestorer.save(sess, "./savedModel/vgg_C.ckpt")
+                print("Saved vgg var at " + save_pathVgg)
 
-                # save_path2 = scale2Restorer.save(sess, "./savedModel/scale2_BwVgg.ckpt")
-                # print("Saved scale2 var at " + save_path2)
+                save_path2 = scale2Restorer.save(sess, "./savedModel/scale2_C.ckpt")
+                print("Saved scale2 var at " + save_path2)
 
-                save_path3 = scale3Restorer.save(sess, "./savedModel/scale3_B.ckpt")
+                save_path3 = scale3Restorer.save(sess, "./savedModel/scale3_C.ckpt")
                 print("Saved scale3 var at " + save_path3)
 
-                if loss_selftest > train_loss + 0.02:
+                if abs(loss_selftest - loss_selftest_prev) <= 0.0005:
                     break
+
+                loss_selftest_prev = loss_selftest
 
             step = step + 1
 
