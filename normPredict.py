@@ -21,13 +21,13 @@ IMAGE_SIZE = 128
 NUM_CHANNELS = 1
 
 # Training Parameters
-lr_vgg = 0.00005 # 0.0005
+lr_vgg = 0.00005
 lr_vgg_fc = 0.001
 
 lr_2_mid = 0.0005
 lr_2_end = 0.00005
 
-lr_3_mid = 0.0005
+lr_3_mid = 0.001
 lr_3_end = 0.0001 #0.0002
 
 # tf Graph input
@@ -284,7 +284,7 @@ def conv_net(img, mask, dropout, is_training, reuse):
         conv4 = tf.layers.conv2d(inputs = conv3,
             filters=3, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv4')
 
-    out = scale2_out
+    out = conv4
     return out
 
 #                                                                         #
@@ -415,22 +415,22 @@ test_step = num_train_set/batch_size # 1 per epoch
 # Generate train op
 
 # vgg
-opt_vgg    = tf.train.AdamOptimizer(learning_rate=lr_vgg)
+# opt_vgg    = tf.train.AdamOptimizer(learning_rate=lr_vgg)
 # part 2
-opt_vgg_fc = tf.train.AdamOptimizer(learning_rate=lr_vgg_fc)
-opt_2mid   = tf.train.AdamOptimizer(learning_rate=lr_2_mid)
-opt_2end   = tf.train.AdamOptimizer(learning_rate=lr_2_end)
+# opt_vgg_fc = tf.train.AdamOptimizer(learning_rate=lr_vgg_fc)
+# opt_2mid   = tf.train.AdamOptimizer(learning_rate=lr_2_mid)
+# opt_2end   = tf.train.AdamOptimizer(learning_rate=lr_2_end)
 # part 3
-# opt_3mid   = tf.train.AdamOptimizer(learning_rate=lr_3_mid)
-# opt_3end   = tf.train.AdamOptimizer(learning_rate=lr_3_end)
+opt_3mid   = tf.train.AdamOptimizer(learning_rate=lr_3_mid)
+opt_3end   = tf.train.AdamOptimizer(learning_rate=lr_3_end)
 
 grads = tf.gradients(loss_op, 
-    vggConvVar_list + 
-    vggFCVar_list +
-    scale2MidVar_list +
-    scale2EndVar_list
-    # scale3MidVar_list +
-    # scale3EndVar_list
+    # vggConvVar_list + 
+    # vggFCVar_list +
+    # scale2MidVar_list +
+    # scale2EndVar_list
+    scale3MidVar_list +
+    scale3EndVar_list
 )
 
 
@@ -440,29 +440,29 @@ grads = tf.gradients(loss_op,
 # grads_s2end   = grads[10:18]
 
 # vgg+2
-grads_vggConv = grads[0:26]
-grads_vggFC   = grads[26:30]
-grads_s2mid   = grads[30:36]
-grads_s2end   = grads[36:44]
+# grads_vggConv = grads[0:26]
+# grads_vggFC   = grads[26:30]
+# grads_s2mid   = grads[30:36]
+# grads_s2end   = grads[36:44]
 
 # part 3
-# grads_s3mid   = grads[0:4]
-# grads_s3end   = grads[4:12]
+grads_s3mid   = grads[0:4]
+grads_s3end   = grads[4:12]
 
-train_vggConv = opt_vgg.apply_gradients(zip(grads_vggConv, vggConvVar_list))
-train_vggFC = opt_vgg_fc.apply_gradients(zip(grads_vggFC, vggFCVar_list))
-train_2mid = opt_2mid.apply_gradients(zip(grads_s2mid, scale2MidVar_list))
-train_2end = opt_2end.apply_gradients(zip(grads_s2end, scale2EndVar_list))
-# train_3mid = opt_3mid.apply_gradients(zip(grads_s3mid, scale3MidVar_list))
-# train_3end = opt_3end.apply_gradients(zip(grads_s3end, scale3EndVar_list))
+# train_vggConv = opt_vgg.apply_gradients(zip(grads_vggConv, vggConvVar_list))
+# train_vggFC = opt_vgg_fc.apply_gradients(zip(grads_vggFC, vggFCVar_list))
+# train_2mid = opt_2mid.apply_gradients(zip(grads_s2mid, scale2MidVar_list))
+# train_2end = opt_2end.apply_gradients(zip(grads_s2end, scale2EndVar_list))
+train_3mid = opt_3mid.apply_gradients(zip(grads_s3mid, scale3MidVar_list))
+train_3end = opt_3end.apply_gradients(zip(grads_s3end, scale3EndVar_list))
 
 train_op = tf.group(
-    train_vggConv, 
-    train_vggFC, 
-    train_2mid, 
-    train_2end 
-    # train_3mid, 
-    # train_3end
+    # train_vggConv, 
+    # train_vggFC, 
+    # train_2mid, 
+    # train_2end 
+    train_3mid, 
+    train_3end
 )
 
 # Initialize the variables (i.e. assign their default value)
@@ -481,8 +481,8 @@ with tf.Session() as sess:
                         evalSetName:    evalSetFiles
             }
     )
-    vggConvRestorer.restore(sess, "./savedModel/vgg_original.ckpt")
-    # scale2Restorer.restore(sess, "./savedModel/scale2_BwVgg.ckpt")
+    vggConvRestorer.restore(sess, "./savedModel/vgg_BwScale2.ckpt")
+    scale2Restorer.restore(sess, "./savedModel/scale2_BwVgg.ckpt")
 
     # Run
     step = 1
@@ -527,16 +527,16 @@ with tf.Session() as sess:
 
                 epoch = epoch + 1
 
-                save_pathVgg = vggConvRestorer.save(sess, "./savedModel/vgg_BwScale2.ckpt")
-                print("Saved vgg var at " + save_pathVgg)
+                # save_pathVgg = vggConvRestorer.save(sess, "./savedModel/vgg_BwScale2.ckpt")
+                # print("Saved vgg var at " + save_pathVgg)
 
-                save_path2 = scale2Restorer.save(sess, "./savedModel/scale2_BwVgg.ckpt")
-                print("Saved scale2 var at " + save_path2)
+                # save_path2 = scale2Restorer.save(sess, "./savedModel/scale2_BwVgg.ckpt")
+                # print("Saved scale2 var at " + save_path2)
 
-                # save_path3 = scale3Restorer.save(sess, "./savedModel/scale3_B.ckpt")
-                # print("Saved scale3 var at " + save_path3)
+                save_path3 = scale3Restorer.save(sess, "./savedModel/scale3_B.ckpt")
+                print("Saved scale3 var at " + save_path3)
 
-                if loss_selftest > train_loss + 0.01:
+                if loss_selftest > train_loss + 0.02:
                     break
 
             step = step + 1
