@@ -27,7 +27,7 @@ lr_vgg_fc = 0.0001
 lr_2_mid = 0.00005
 lr_2_end = 0.00001
 
-lr_3_mid = 0.00005
+lr_3_mid = 0.00005 
 lr_3_end = 0.00001 #0.0002
 
 # tf Graph input
@@ -134,170 +134,118 @@ def scalePrediction(_pred_single):
 
     return _pred_single
 
+def conv2dBnReLU(inputs, name, num_filter, kernel_size, is_training, reuse):
+    with tf.variable_scope(name, reuse=reuse):
+        conv = tf.layers.conv2d(inputs = inputs, filters=num_filter, kernel_size=kernel_size, padding='same', name='conv')
+        conv = tf.layers.batch_normalization(conv, scale=False, training=is_training)
+        return tf.nn.relu(conv)
+
+def residual(inputs, name, is_training, reuse):
+    with tf.variable_scope(name, reuse = reuse):
+        conv1 = conv2dBnReLU(inputs=inputs, name='conv1', num_filter=128, kernel_size=1, is_training=is_training, reuse=reuse)
+        conv2 = conv2dBnReLU(inputs=conv1,  name='conv2', num_filter=128, kernel_size=3, is_training=is_training, reuse=reuse)
+        conv3 = conv2dBnReLU(inputs=conv2,  name='conv3', num_filter=256, kernel_size=1, is_training=is_training, reuse=reuse)
+        return conv3+inputs
+
+def hourglass(inputs, name, is_training, reuse):
+
+    with tf.variable_scope(name, reuse = reuse):
+
+        hgL = residual(inputs, 'hgL', is_training=is_training, reuse=reuse)
+        # Max Pooling (down-sampling) with strides of 2 and kernel size of 2
+        low1_in = tf.layers.max_pooling2d(hgL, 2, 2)
+
+        low1 = residual(low1_in, 'low1', is_training=is_training, reuse=reuse)
+        # Max Pooling (down-sampling) with strides of 2 and kernel size of 2
+        low2_in = tf.layers.max_pooling2d(low1, 2, 2)
+
+        low2 = residual(low2_in, 'low2', is_training=is_training, reuse=reuse)
+        # Max Pooling (down-sampling) with strides of 2 and kernel size of 2
+        low3_in = tf.layers.max_pooling2d(low2, 2, 2)
+
+        low3 = residual(low3_in, 'low3', is_training=is_training, reuse=reuse)
+        # Max Pooling (down-sampling) with strides of 2 and kernel size of 2
+        in1_in = tf.layers.max_pooling2d(low3, 2, 2)
+
+        # Inner three blocks
+        in1 = residual(in1_in, 'in1', is_training=is_training, reuse=reuse)
+        in2 = residual(in1, 'in2', is_training=is_training, reuse=reuse)
+        in3 = residual(in2, 'in3', is_training=is_training, reuse=reuse)
+        in3 = tf.image.resize_nearest_neighbor(in3, size=(16, 16))
+
+        # branch blocks
+        hgL_b = residual(hgL, 'hgL_b', is_training=is_training, reuse=reuse)
+        low1_b = residual(low1, 'low1_b', is_training=is_training, reuse=reuse)
+        low2_b = residual(low2, 'low2_b', is_training=is_training, reuse=reuse)
+        low3_b = residual(low3, 'low3_b', is_training=is_training, reuse=reuse)
+
+        # remaining network
+        
+        up1_in = low3_b + in3
+        up1 = residual(up1_in, 'up1', is_training=is_training, reuse=reuse)
+        up1 = tf.image.resize_nearest_neighbor(up1, size=(32, 32))
+
+        up2_in = low2_b + up1
+        up2 = residual(up2_in, 'up2', is_training=is_training, reuse=reuse)
+        up2 = tf.image.resize_nearest_neighbor(up2, size=(64, 64))
+
+        up3_in = low1_b + up2
+        up3 = residual(up3_in, 'up3', is_training=is_training, reuse=reuse)
+        up3 = tf.image.resize_nearest_neighbor(up3, size=(128, 128))
+
+        hgR_in = hgL_b + up3
+        hgR = residual(hgR_in, 'hgR', is_training=is_training, reuse=reuse)
+
+        return hgR
+
+def hourglass_int(inputs, name, is_training, reuse):
+
+    with tf.variable_scope(name, reuse=reuse):
+
+        hgOut = hourglass(inputs, '_hourglass', is_training=is_training, reuse=reuse)
+        res1 = residual(hgOut, 'res1', is_training=is_training, reuse=reuse)
+        res2 = residual(res1, 'res2', is_training=is_training, reuse=reuse)
+
+        # intermediate prediction
+        int_pred = tf.layers.conv2d(inputs = res1, filters=3, kernel_size=1, activation=tf.nn.relu, padding='same', name='int_pred')
+
+        res3 = tf.layers.conv2d(inputs = int_pred, filters=256, kernel_size=1, activation=tf.nn.relu, padding='same', name='res3')
+
+        return res3 + res2 + inputs, int_pred
+
+def preprocess(inputs, is_training, reuse):
+
+    with tf.variable_scope('pre', reuse=reuse):
+
+        conv1 = conv2dBnReLU(inputs=inputs, name='conv1', num_filter=256, kernel_size=3, is_training=is_training, reuse=reuse)
+        res1 = residual(conv1, 'res1', is_training=is_training, reuse=reuse)
+        res2 = residual(res1,  'res2', is_training=is_training, reuse=reuse)
+        return res2
 
 # Create the neural network
 def conv_net(img, mask, dropout, is_training, reuse):
 
-    # Reshape to match picture format [Height x Width x Channel]
-    # Tensor input become 4-D: [Batch Size, Height, Width, Channel]
     img = tf.reshape(img, shape=[-1, IMAGE_SIZE, IMAGE_SIZE, 3], name='inputTensor')
     mask = tf.reshape(mask, shape=[-1, IMAGE_SIZE, IMAGE_SIZE, 1], name='inputMask')
-    with tf.variable_scope('vgg', reuse = reuse):
+    
+    padding_img = tf.constant([[0, 0,], [0, 0], [0, 0], [0, 1]])
+    img = tf.pad(img, padding_img, "CONSTANT")
 
-        # Convolution Layer with 64 filters and a kernel size of 3
-        conv1_1 = tf.layers.conv2d(inputs = img,
-            filters=64, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv1_1')
-        conv1_2 = tf.layers.conv2d(inputs = conv1_1,
-            filters=64, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv1_2')
-        # Max Pooling (down-sampling) with strides of 2 and kernel size of 2
-        pool1 = tf.layers.max_pooling2d(conv1_2, 2, 2)
+    padding_mask = tf.constant([[0, 0,], [0, 0], [0, 0], [3, 0]])
+    mask = tf.pad(mask, padding_mask, "CONSTANT")
 
-        # Convolution Layer with 32 filters and a kernel size of 3
-        conv2_1 = tf.layers.conv2d(inputs = pool1,
-            filters=128, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv2_1')
-        conv2_2 = tf.layers.conv2d(inputs = conv2_1,
-            filters=128, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv2_2')
-        # Max Pooling (down-sampling) with strides of 2 and kernel size of 2
-        pool2 = tf.layers.max_pooling2d(conv2_2, 2, 2)
+    imgWmask = img + mask
 
-        # Convolution Layer with 256 filters and a kernel size of 3
-        conv3_1 = tf.layers.conv2d(inputs = pool2,
-            filters=256, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv3_1')
-        conv3_2 = tf.layers.conv2d(inputs = conv3_1,
-            filters=256, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv3_2')
-        conv3_3 = tf.layers.conv2d(inputs = conv3_2,
-            filters=256, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv3_3')
-        # Max Pooling (down-sampling) with strides of 2 and kernel size of 2
-        pool3 = tf.layers.max_pooling2d(conv3_3, 2, 2)
+    with tf.variable_scope('ConvNet', reuse=reuse):
 
-        # Convolution Layer with 512 filters and a kernel size of 3
-        conv4_1 = tf.layers.conv2d(inputs = pool3,
-            filters=512, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv4_1')
-        conv4_2 = tf.layers.conv2d(inputs = conv4_1,
-            filters=512, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv4_2')
-        conv4_3 = tf.layers.conv2d(inputs = conv4_2,
-            filters=512, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv4_3')
-        # Max Pooling (down-sampling) with strides of 2 and kernel size of 2
-        pool4 = tf.layers.max_pooling2d(conv4_3, 2, 2)
+        preprocessed = preprocess(imgWmask, is_training=is_training, reuse=reuse)
 
-        # Convolution Layer with 512 filters and a kernel size of 3
-        conv5_1 = tf.layers.conv2d(inputs = pool4,
-            filters=512, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv5_1')
-        conv5_2 = tf.layers.conv2d(inputs = conv5_1,
-            filters=512, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv5_2')
-        conv5_3 = tf.layers.conv2d(inputs = conv5_2,
-            filters=512, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv5_3')
-        # Max Pooling (down-sampling) with strides of 2 and kernel size of 2
-        pool5 = tf.layers.max_pooling2d(conv5_3, 2, 2)
-
-        # Flatten the data to a 1-D vector for the fully connected layer
-        fc1 = tf.contrib.layers.flatten(pool5)
-
-        # Fully connected layer (in tf contrib folder for now)
-        fc1 = tf.layers.dense(fc1, 4096, name='fc1')
-        # Apply Dropout (if is_training is False, dropout is not applied)
-        fc1 = tf.layers.dropout(fc1, rate=dropout, training=is_training) # drop = 0.5
-        fc1 = tf.nn.relu(fc1)
-
-        # Fully connected layer (in tf contrib folder for now)
-        fc2 = tf.layers.dense(fc1, 8*8*64, name='fc2')
-        fc2 = tf.reshape(fc2, [-1, 8, 8, 64])
-        fc2 = tf.nn.relu(fc2)
-
-        # Upsample
-        vgg_out = tf.image.resize_nearest_neighbor(fc2, size=(32, 32))
-
-
-    with tf.variable_scope('scale2', reuse = reuse): 
-
-        conv2_img = tf.layers.conv2d(inputs = img,
-            filters=96, kernel_size=5, activation=tf.nn.relu, padding='same', name='conv2_img')
-        # Max Pooling (down-sampling) with strides of 4 and kernel size of 4
-        pool2_img = tf.layers.max_pooling2d(conv2_img, 4, 4)
-
-        conv2_mask = tf.layers.conv2d(inputs = mask,
-            filters=48, kernel_size=5, activation=tf.nn.relu, padding='same', name='conv2_mask')
-        # Max Pooling (down-sampling) with strides of 4 and kernel size of 4
-        pool2_mask = tf.layers.max_pooling2d(conv2_mask, 4, 4)
-
-        # Stack conv2img with vgg_out, aixs = channel
-        padding_pool2_img = tf.constant([[0, 0,], [0, 0], [0, 0], [0, 48+64]])
-        pool2_img = tf.pad(pool2_img, padding_pool2_img, "CONSTANT")
-
-        padding_pool2_mask = tf.constant([[0, 0,], [0, 0], [0, 0], [96, 64]])
-        pool2_mask = tf.pad(pool2_mask, padding_pool2_mask, "CONSTANT")
-
-        padding_vgg_out = tf.constant([[0, 0,], [0, 0], [0, 0], [96+48, 0]])
-        vgg_out = tf.pad(vgg_out, padding_vgg_out, "CONSTANT")
-
-        stack2 = pool2_img + pool2_mask + vgg_out
-
-        # Convolution Layer with 96+64 filters and a kernel size of 5
-        conv1 = tf.layers.conv2d(inputs = stack2,
-            filters=96+48+64, kernel_size=5, activation=tf.nn.relu, padding='same', name='conv1')
-        # Convolution Layer with 64 filters and a kernel size of 3
-        conv2 = tf.layers.conv2d(inputs = conv1,
-            filters=64, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv2')
-        # Convolution Layer with 64 filters and a kernel size of 3
-        conv3 = tf.layers.conv2d(inputs = conv2,
-            filters=64, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv3')
-        # Convolution Layer with 64 filters and a kernel size of 3
-        conv4 = tf.layers.conv2d(inputs = conv3,
-            filters=64, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv4')
-        # Convolution Layer with 3 filters and a kernel size of 3
-        conv5 = tf.layers.conv2d(inputs = conv4,
-            filters=3, kernel_size=3, activation=tf.nn.relu, padding='same', name='conv5')
         
-        # Upsample
-        scale2_out = tf.image.resize_nearest_neighbor(conv5, size=(128, 128))
+
+        return out
 
 
-    with tf.variable_scope('scale3', reuse = reuse):
 
-        conv3_img = tf.layers.conv2d(inputs = img,
-            filters=96, kernel_size=9, activation=tf.nn.relu,
-            kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr_3_end),
-            padding='same', name='conv3_img')
-
-        conv3_mask = tf.layers.conv2d(inputs = mask,
-            filters=48, kernel_size=9, activation=tf.nn.relu,
-            kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr_3_end),
-            padding='same', name='conv3_mask')
-
-        padding_conv3_img = tf.constant([[0, 0,], [0, 0], [0, 0], [0, 48+3]])
-        conv3_img = tf.pad(conv3_img, padding_conv3_img, "CONSTANT")
-
-        padding_conv3_mask = tf.constant([[0, 0,], [0, 0], [0, 0], [96, 3]])
-        conv3_mask = tf.pad(conv3_mask, padding_conv3_mask, "CONSTANT")
-
-        padding_scale2_out = tf.constant([[0, 0,], [0, 0], [0, 0], [96+48, 0]])
-        scale2_out_padded = tf.pad(scale2_out, padding_scale2_out, "CONSTANT")
-
-        stack3 = conv3_img + conv3_mask + scale2_out_padded
-
-        # Convolution Layer with 96+48+3 filters and a kernel size of 9
-        conv1 = tf.layers.conv2d(inputs = stack3,
-            filters=96+48+3, kernel_size=9, activation=tf.nn.relu,
-            kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr_3_end),
-            padding='same', name='conv1')
-        # Convolution Layer with 64 filters and a kernel size of 5
-        conv2 = tf.layers.conv2d(inputs = conv1,
-            filters=64, kernel_size=5, activation=tf.nn.relu,
-            kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr_3_mid),
-            padding='same', name='conv2')
-        # Convolution Layer with 64 filters and a kernel size of 5
-        conv3 = tf.layers.conv2d(inputs = conv2,
-            filters=64, kernel_size=5, activation=tf.nn.relu,
-            kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr_3_mid),
-            padding='same', name='conv3')
-        # Convolution Layer with 3 filters and a kernel size of 5
-        conv4 = tf.layers.conv2d(inputs = conv3,
-            filters=3, kernel_size=5, activation=tf.nn.relu,
-            kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr_3_end),
-            padding='same', name='conv4')
-
-    out = conv4
-    return out
 
 #                                                                         #
 # #############################   DATASET   ############################# #
@@ -392,29 +340,8 @@ scale3Restorer = tf.train.Saver(scale3Var_list)
 # for t in vggFC_scale2Var_list:
 #     print(t.op.name, t.shape)
 # print("\n\n")
-# for t in vggFCVar_list:
-#     print(t.op.name, t.shape)
-# print("\n\n")
 
-# for t in scale2MidVar_list:
-#     print(t.op.name, t.shape)
-# print("\n\n")
-# for t in scale2EndVar_list:
-#     print(t.op.name, t.shape)
-# print("\n\n")
-
-# for t in scale3Var_list:
-#     print(t.op.name, t.shape)
-# print("\n\n")
-
-# for t in scale3MidVar_list:
-#     print(t.op.name, t.shape)
-# print("\n\n")
-# for t in scale3EndVar_list:
-#     print(t.op.name, t.shape)
-# print("\n\n")
-
-# exit(0)
+exit(0)
 
 #                                                                          #
 # ###########################   TRAIN & LOSS   ########################### #
