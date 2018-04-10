@@ -136,7 +136,9 @@ def scalePrediction(_pred_single):
 
 def conv2dBnReLU(inputs, name, num_filter, kernel_size, is_training, reuse):
     with tf.variable_scope(name, reuse=reuse):
-        conv = tf.layers.conv2d(inputs = inputs, filters=num_filter, kernel_size=kernel_size, padding='same', name='conv')
+        conv = tf.layers.conv2d(inputs = inputs, filters=num_filter, kernel_size=kernel_size, 
+                                kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr),
+                                padding='same', name='conv')
         conv = tf.layers.batch_normalization(conv, scale=False, training=is_training)
         return tf.nn.relu(conv)
 
@@ -207,9 +209,13 @@ def hourglass_int(inputs, name, is_training, reuse):
         res2 = residual(res1, 'res2', is_training=is_training, reuse=reuse)
 
         # intermediate prediction
-        int_pred = tf.layers.conv2d(inputs = res1, filters=3, kernel_size=1, activation=tf.nn.relu, padding='same', name='int_pred')
+        int_pred = tf.layers.conv2d(inputs = res1, filters=3, kernel_size=1, activation=tf.nn.relu,
+                                    kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr),
+                                    padding='same', name='int_pred')
 
-        res3 = tf.layers.conv2d(inputs = int_pred, filters=256, kernel_size=1, activation=tf.nn.relu, padding='same', name='res3')
+        res3 = tf.layers.conv2d(inputs = int_pred, filters=256, kernel_size=1, activation=tf.nn.relu,
+                                kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr),
+                                padding='same', name='res3')
 
         return res3 + res2 + inputs, int_pred
 
@@ -240,12 +246,23 @@ def conv_net(img, mask, dropout, is_training, reuse):
 
         preprocessed = preprocess(imgWmask, is_training=is_training, reuse=reuse)
 
-        
+        hgout_1, intpred_1 = hourglass_int(preprocessed, 'hourglass.1', is_training=is_training, reuse=reuse)
 
-        return out
+        hgout_2, intpred_2 = hourglass_int(hgout_1, 'hourglass.2', is_training=is_training, reuse=reuse)
 
+        hgout = hourglass(hgout_2, 'hourglass.out', is_training=is_training, reuse=reuse)
+        res1 = residual(hgout, 'res1', is_training=is_training, reuse=reuse)
+        res2 = residual(res1, 'res2',  is_training=is_training, reuse=reuse)
 
+        fc1 = tf.layers.conv2d(inputs = res2, filters=3, kernel_size=1, activation=tf.nn.relu,
+                               kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr),
+                               padding='same', name='fc1')
+        fc1 = tf.layers.dropout(fc1, rate=dropout, training=is_training)
+        prediction = tf.layers.conv2d(inputs = fc1, filters=3, kernel_size=1, activation=tf.nn.relu,
+                               kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr),
+                               padding='same', name='predfc')
 
+        return intpred_1, intpred_2, prediction
 
 #                                                                         #
 # #############################   DATASET   ############################# #
@@ -288,8 +305,10 @@ imageIn_eval, maskIn_eval = it_eval.get_next()
 #                                                                         #
 
 # Construct model
-prediction = conv_net(imageIn, maskIn, Drop_rate, is_training=True, reuse=False)
-loss_op = calcloss(prediction, maskIn, gtIn)
+intpred_1, intpred_2, prediction = conv_net(imageIn, maskIn, Drop_rate, is_training=True, reuse=False)
+loss_int1  = calcloss(intpred_1,  maskIn, gtIn)
+loss_int2  = calcloss(intpred_2,  maskIn, gtIn)
+loss_final = calcloss(prediction, maskIn, gtIn)
 
 # Construct test graph
 prediction_slftest = conv_net(imageIn_slftest, maskIn_slftest, dropout=0.0, is_training=False, reuse=True)
