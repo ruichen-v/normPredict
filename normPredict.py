@@ -16,19 +16,14 @@ import os
 import matplotlib.pyplot as plt
 import scipy.misc
 import time
+from PIL import Image
 
 IMAGE_SIZE = 128
 NUM_CHANNELS = 1
 
 # Training Parameters
-lr_vgg = 0.00001
-lr_vgg_fc = 0.0001
-
-lr_2_mid = 0.00005
-lr_2_end = 0.00001
-
-lr_3_mid = 0.00005 
-lr_3_end = 0.00001 #0.0002
+lr = 0.0005
+nStack = 2
 
 # tf Graph input
 trainSetName = tf.placeholder(tf.string, shape=[None])
@@ -77,7 +72,11 @@ def _parser_eval(proto):
 
 def caldotprod(prediction, mask, groundtruth):
     # normalize prediction
-    _prediction = ((prediction / 255.0) - 0.5) * 2.
+    _prediction = prediction
+    maxv = tf.reduce_max(_prediction)
+    minv = tf.reduce_min(_prediction)
+    _prediction = tf.where(tf.greater_equal(_prediction, tf.zeros_like(_prediction)), 
+                            _prediction / maxv, _prediction / (-minv))
     _pred_norm = tf.sqrt(tf.reduce_sum(tf.multiply(_prediction, _prediction), axis=3, keep_dims=True))
     _pred_normalized = tf.div(_prediction, tf.tile(_pred_norm, [1,1,1,3]))
     # normalize groundtruth
@@ -120,17 +119,12 @@ def getVggStoredName(var):
         print("Error: No kernel or bias")
 
 def scalePrediction(_pred_single):
-    if np.max(_pred_single) > 255.0:
-        _pred_single = _pred_single - 255.0/2.0
-        _pred_single = _pred_single / np.max(_pred_single) * (255.0/2.0)
-        _pred_single = _pred_single + 255.0/2.0
-        min_pos = np.unravel_index(np.argmin(_pred_single),_pred_single.shape)
-        _pred_single[min_pos[0], min_pos[1], min_pos[2]] = 0;
-        _pred_single = np.clip(_pred_single, 0., 255.)
-    else:
-        max_pos = np.unravel_index(np.argmax(_pred_single),_pred_single.shape)
-        _pred_single[max_pos[0], max_pos[1], max_pos[2]] = 255.0;
-        _pred_single = np.clip(_pred_single, 0., 255.)
+    maxv = np.amax(_pred_single)
+    minv = np.amin(_pred_single)
+    _pred_single[_pred_single>0] = _pred_single[_pred_single>0]/maxv*(255./2.)
+    _pred_single[_pred_single<0] = _pred_single[_pred_single<0]/(-minv)*(255./2.)
+    _pred_single = _pred_single + (255./2.)
+    _pred_single = np.clip(_pred_single, 0., 255.)
 
     return _pred_single
 
@@ -204,12 +198,12 @@ def hourglass_int(inputs, name, is_training, reuse):
 
     with tf.variable_scope(name, reuse=reuse):
 
-        hgOut = hourglass(inputs, '_hourglass', is_training=is_training, reuse=reuse)
-        res1 = residual(hgOut, 'res1', is_training=is_training, reuse=reuse)
+        hg_Out = hourglass(inputs, '_hourglass', is_training=is_training, reuse=reuse)
+        res1 = residual(hg_Out, 'res1', is_training=is_training, reuse=reuse)
         res2 = residual(res1, 'res2', is_training=is_training, reuse=reuse)
 
         # intermediate prediction
-        int_pred = tf.layers.conv2d(inputs = res1, filters=3, kernel_size=1, activation=tf.nn.relu,
+        int_pred = tf.layers.conv2d(inputs = res1, filters=3, kernel_size=1,
                                     kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr),
                                     padding='same', name='int_pred')
 
@@ -242,36 +236,40 @@ def conv_net(img, mask, dropout, is_training, reuse):
 
     imgWmask = img + mask
 
+    ret = [None] * nStack # int1 int2 .. Final
+    hgout = [None] * nStack
+
     with tf.variable_scope('ConvNet', reuse=reuse):
 
         preprocessed = preprocess(imgWmask, is_training=is_training, reuse=reuse)
 
-        hgout_1, intpred_1 = hourglass_int(preprocessed, 'hourglass.1', is_training=is_training, reuse=reuse)
+        hgout[0], ret[0] = hourglass_int(preprocessed, 'hourglass.0', is_training=is_training, reuse=reuse)
 
-        hgout_2, intpred_2 = hourglass_int(hgout_1, 'hourglass.2', is_training=is_training, reuse=reuse)
+        for i in range(1, nStack-1):
+            hgout[i], ret[i] = hourglass_int(hgout[i-1], 'hourglass.'+str(i), is_training=is_training, reuse=reuse)
 
-        hgout = hourglass(hgout_2, 'hourglass.out', is_training=is_training, reuse=reuse)
-        res1 = residual(hgout, 'res1', is_training=is_training, reuse=reuse)
+        hgout[-1] = hourglass(hgout[nStack-2], 'hourglass.out', is_training=is_training, reuse=reuse)
+        res1 = residual(hgout[-1], 'res1', is_training=is_training, reuse=reuse)
         res2 = residual(res1, 'res2',  is_training=is_training, reuse=reuse)
 
-        fc1 = tf.layers.conv2d(inputs = res2, filters=3, kernel_size=1, activation=tf.nn.relu,
+        fc1 = tf.layers.conv2d(inputs = res2, filters=256, kernel_size=1, activation=tf.nn.relu,
                                kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr),
                                padding='same', name='fc1')
         fc1 = tf.layers.dropout(fc1, rate=dropout, training=is_training)
-        prediction = tf.layers.conv2d(inputs = fc1, filters=3, kernel_size=1, activation=tf.nn.relu,
+        ret[-1] = tf.layers.conv2d(inputs = fc1, filters=3, kernel_size=1,
                                kernel_regularizer =  tf.contrib.layers.l2_regularizer(scale=0.0005/lr),
                                padding='same', name='predfc')
 
-        return intpred_1, intpred_2, prediction
 
+        return ret
 #                                                                         #
 # #############################   DATASET   ############################# #
 #                                                                         #
 num_train_set = 18000
 num_self_test_set = 20000-num_train_set
-test_batch_size = 20
+test_batch_size = 5
 num_eval_set = 2000
-batch_size = 18
+batch_size = 5
 
 trainingSetFiles = ['./trainTFRecords/' + str(I) +'.tfrecords' for I in range(0,num_train_set)]
 slfTestSetFiles = ['./trainTFRecords/' + str(I) +'.tfrecords' for I in range(num_train_set,20000)]
@@ -305,131 +303,51 @@ imageIn_eval, maskIn_eval = it_eval.get_next()
 #                                                                         #
 
 # Construct model
-intpred_1, intpred_2, prediction = conv_net(imageIn, maskIn, Drop_rate, is_training=True, reuse=False)
-loss_int1  = calcloss(intpred_1,  maskIn, gtIn)
-loss_int2  = calcloss(intpred_2,  maskIn, gtIn)
-loss_final = calcloss(prediction, maskIn, gtIn)
+predictions = conv_net(imageIn, maskIn, Drop_rate, is_training=True, reuse=False)
+losses = [None] * nStack
+weights = tf.pow(tf.constant(10.), tf.constant(list(range(nStack)),dtype=tf.float32)+1.)
+weights = weights / tf.reduce_sum(weights)
+for i in range(nStack):
+    losses[i]  = calcloss(predictions[i], maskIn, gtIn) * weights[i]
+
+loss_op = tf.reduce_sum(losses)
 
 # Construct test graph
-prediction_slftest = conv_net(imageIn_slftest, maskIn_slftest, dropout=0.0, is_training=False, reuse=True)
-loss_test_dotprod_op = caldotprod(prediction_slftest, maskIn_slftest, gtIn_slftest)
+test_predictions = conv_net(imageIn_slftest, maskIn_slftest, dropout=0.0, is_training=False, reuse=True)
+test_dotprods_op = caldotprod(test_predictions[-1], maskIn_slftest, gtIn_slftest)
 
 # Construct eval graph
-prediction_eval = conv_net(imageIn_eval, maskIn_eval, dropout=0.0, is_training=False, reuse=True)
+eval_predictions = conv_net(imageIn_eval, maskIn_eval, dropout=0.0, is_training=False, reuse=True)
+prediction_eval = eval_predictions[-1]
 
+# for name in sorted([var.op.name for var in tf.global_variables()]):
+#     print(name)
+
+# exit(0)
 #                                                                         #
 # #############################   VAR MAN   ############################# #
 #                                                                         #
 
 # Manage vars
-
-# Vgg var
-vggConvVar_dict = {getVggStoredName(val):val for val in tf.global_variables() if 'vgg/conv' in val.op.name}
-vggConvVar_list = list(vggConvVar_dict.values())
-
-# scale2Var
-vggFC_scale2Var_list = [var for var in tf.global_variables() if var not in vggConvVar_list and 'scale3' not in var.op.name]
-vggFCVar_list = [var for var in tf.global_variables() if 'vgg/fc' in var.op.name]
-
-scale2EndVar_list = [var for var in tf.global_variables() if 'scale2/conv1' in var.op.name or \
-                                                             'scale2/conv5' in var.op.name or \
-                                                             '2_img' in var.op.name or \
-                                                             '2_mask' in var.op.name]
-
-scale2MidVar_list = [var for var in tf.global_variables() if 'scale2' in var.op.name and var not in scale2EndVar_list]
-
-# scale3Var
-scale3Var_list = [var for var in tf.global_variables() if 'scale3' in var.op.name]
-scale3EndVar_list = [var for var in scale3Var_list if 'conv1' in var.op.name or \
-                                                      'conv4' in var.op.name or \
-                                                      'img' in var.op.name or \
-                                                      'mask' in var.op.name]
-
-scale3MidVar_list = [var for var in scale3Var_list if var not in scale3EndVar_list]
-
+saveVar = tf.global_variables()
 
 # Savers
-vggConvRestorer = tf.train.Saver(vggConvVar_dict)
-scale2Restorer = tf.train.Saver(vggFC_scale2Var_list)
-scale3Restorer = tf.train.Saver(scale3Var_list)
-
-# for key, val in vggConvVar_dict.items():
-#     print(key, val)
-# print("\n\n")
-# for t in vggFC_scale2Var_list:
-#     print(t.op.name, t.shape)
-# print("\n\n")
-
-exit(0)
+restorer = tf.train.Saver(saveVar)
 
 #                                                                          #
 # ###########################   TRAIN & LOSS   ########################### #
 #                                                                          #
 
-num_epochs = 3
+num_epochs = 20
 display_step = 10
 test_step = num_train_set/batch_size # 1 per epoch
 
 # Generate train op
 
-# vgg
-opt_vgg    = tf.train.AdamOptimizer(learning_rate=lr_vgg)
-# part 2
-opt_vgg_fc = tf.train.AdamOptimizer(learning_rate=lr_vgg_fc)
-opt_2mid   = tf.train.AdamOptimizer(learning_rate=lr_2_mid)
-opt_2end   = tf.train.AdamOptimizer(learning_rate=lr_2_end)
-# part 3
-opt_3mid   = tf.train.AdamOptimizer(learning_rate=lr_3_mid)
-opt_3end   = tf.train.AdamOptimizer(learning_rate=lr_3_end)
-
-grads = tf.gradients(loss_op, 
-    vggConvVar_list + 
-    vggFCVar_list +
-    scale2MidVar_list +
-    scale2EndVar_list +
-    scale3MidVar_list +
-    scale3EndVar_list
-)
-
-
-# part 2
-# grads_vggFC   = grads[0:4]
-# grads_s2mid   = grads[4:10]
-# grads_s2end   = grads[10:18]
-
-# vgg+2
-# grads_vggConv = grads[0:26]
-# grads_vggFC   = grads[26:30]
-# grads_s2mid   = grads[30:36]
-# grads_s2end   = grads[36:44]
-
-# part 3
-# grads_s3mid   = grads[0:4]
-# grads_s3end   = grads[4:12]
-
-# alll
-grads_vggConv = grads[0:26]
-grads_vggFC   = grads[26:30]
-grads_s2mid   = grads[30:36]
-grads_s2end   = grads[36:44]
-grads_s3mid   = grads[44:48]
-grads_s3end   = grads[48:56]
-
-train_vggConv = opt_vgg.apply_gradients(zip(grads_vggConv, vggConvVar_list))
-train_vggFC = opt_vgg_fc.apply_gradients(zip(grads_vggFC, vggFCVar_list))
-train_2mid = opt_2mid.apply_gradients(zip(grads_s2mid, scale2MidVar_list))
-train_2end = opt_2end.apply_gradients(zip(grads_s2end, scale2EndVar_list))
-train_3mid = opt_3mid.apply_gradients(zip(grads_s3mid, scale3MidVar_list))
-train_3end = opt_3end.apply_gradients(zip(grads_s3end, scale3EndVar_list))
-
-train_op = tf.group(
-    train_vggConv, 
-    train_vggFC, 
-    train_2mid, 
-    train_2end, 
-    train_3mid, 
-    train_3end
-)
+optimizer  = tf.train.AdamOptimizer(learning_rate=lr)
+update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+with tf.control_dependencies(update_ops):
+    train_op = optimizer.minimize(loss_op)
 
 # Initialize the variables (i.e. assign their default value)
 init_val = tf.global_variables_initializer()
@@ -437,7 +355,7 @@ init_val = tf.global_variables_initializer()
 # Start training
 with tf.Session() as sess:
 
-    writer = tf.summary.FileWriter("./graph", sess.graph)
+    # writer = tf.summary.FileWriter("./graph", sess.graph)
 
     # Run the initializer
     sess.run(tf.group(init_val, it_train.initializer, it_selftest.initializer, it_eval.initializer), \
@@ -447,9 +365,7 @@ with tf.Session() as sess:
                         evalSetName:    evalSetFiles
             }
     )
-    vggConvRestorer.restore(sess, "./savedModel/vgg_new.ckpt")
-    scale2Restorer.restore(sess, "./savedModel/scale2_difflr.ckpt")
-    scale3Restorer.restore(sess, "./savedModel/scale3.ckpt")
+    restorer.restore(sess, "./savedModel/hg3.ckpt")
 
     # Run
     step = 1
@@ -457,7 +373,9 @@ with tf.Session() as sess:
     tic = time.time()
     loss_cum = 0
     loss_selftest_prev = 1
-    while True:
+    min_loss = 6
+    Training = False
+    while Training:
     # for i in range(0,10):
         try:
             # Run optimization op (backprop)
@@ -469,22 +387,25 @@ with tf.Session() as sess:
                       "Step " + str(step) + ", Mini batch Loss= " + "{:.4f}".format(loss))
             # Display self-test loss
             if step % test_step == 0:
-                dotprod_selftest_cum = []
+                dotprod_selftest_join = []
                 for test_batch_i in range(0, int(num_self_test_set/test_batch_size)):
-                    dotprod_part, pred_selftest, mask_selftest, gt_selftest = sess.run(loss_test_dotprod_op)
+                    dotprod_part, pred_selftest, mask_selftest, gt_selftest = sess.run(test_dotprods_op)
                     dotprod_selftest = np.array(dotprod_part)
-                    dotprod_selftest_cum = np.concatenate((dotprod_selftest_cum,dotprod_selftest),axis=0)
+                    dotprod_selftest_join = np.concatenate((dotprod_selftest_join,dotprod_selftest),axis=0)
 
                     # SAVE DEBUG IMAGES
                     for id_in_batch in range(0,len(pred_selftest)):
                         # SCALE PREDICTION TO 0-255
                         pred_single = pred_selftest[id_in_batch,:,:,:]
 
-                        scipy.misc.imsave('./test_pred/' + str(test_batch_size * test_batch_i + id_in_batch) + '.png', scalePrediction(pred_single))
-                        scipy.misc.imsave('./test_mask/' + str(test_batch_size * test_batch_i + id_in_batch) + '.png', mask_selftest[id_in_batch,:,:])
-                        scipy.misc.imsave('./test_gt/' + str(test_batch_size * test_batch_i + id_in_batch) + '.png',   gt_selftest[id_in_batch,:,:,:])
+                        Image.fromarray(scalePrediction(pred_single).astype(np.uint8)) \
+                            .save('./test_pred/' + str(test_batch_size * test_batch_i + id_in_batch) + '.png')
+                        Image.fromarray(mask_selftest[id_in_batch,:,:].astype(np.uint8)) \
+                            .save('./test_mask/' + str(test_batch_size * test_batch_i + id_in_batch) + '.png')
+                        Image.fromarray(gt_selftest[id_in_batch,:,:,:].astype(np.uint8)) \
+                            .save('./test_gt/' + str(test_batch_size * test_batch_i + id_in_batch) + '.png')
 
-                loss_selftest = -np.mean(dotprod_selftest_cum.astype(np.float32))
+                loss_selftest = - np.mean(dotprod_selftest_join.astype(np.float32))
                 train_loss = loss_cum/test_step
                 print("Epoch " + str(epoch) + ", test loss: " + "{:.4f}".format(loss_selftest) + ", train loss: " + "{:.4f}".format(train_loss))
                 loss_cum = 0
@@ -495,16 +416,12 @@ with tf.Session() as sess:
 
                 epoch = epoch + 1
 
-                save_pathVgg = vggConvRestorer.save(sess, "./savedModel/vgg_C.ckpt")
-                print("Saved vgg var at " + save_pathVgg)
+                if loss_selftest < min_loss:
+                    # save_path = restorer.save(sess, "./savedModel/hg3.ckpt")
+                    # print("Saved var at " + save_path)
+                    min_loss = loss_selftest
 
-                save_path2 = scale2Restorer.save(sess, "./savedModel/scale2_C.ckpt")
-                print("Saved scale2 var at " + save_path2)
-
-                save_path3 = scale3Restorer.save(sess, "./savedModel/scale3_C.ckpt")
-                print("Saved scale3 var at " + save_path3)
-
-                if abs(loss_selftest - loss_selftest_prev) <= 0.0005:
+                if abs(loss_selftest - loss_selftest_prev) <= 0.0001:
                     break
 
                 loss_selftest_prev = loss_selftest
@@ -514,13 +431,12 @@ with tf.Session() as sess:
         except tf.errors.OutOfRangeError as e:
             break
 
-    
-
     for eval_batch_i in range(0, int(num_eval_set/test_batch_size)):
         pred_eval = sess.run(prediction_eval)
         # SAVE EVAL IMAGES
         for id_in_batch in range(0,len(pred_eval)):
-            scipy.misc.imsave('./submit_out/' + str(test_batch_size * eval_batch_i + id_in_batch) + '.png', scalePrediction(pred_eval[id_in_batch,:,:,:]))
+            Image.fromarray(scalePrediction(pred_eval[id_in_batch,:,:,:]).astype(np.uint8)) \
+                            .save('./submit_out/' + str(test_batch_size * eval_batch_i + id_in_batch) + '.png')
 
     print("Optimization Finished!")
 
